@@ -1,24 +1,13 @@
-cc_test {
-    name: "audiotrack_test_client",
-    srcs: ["audiotrack_test_client.cpp"],
+cc_defaults {
+    name: "audio_test_client_defaults",
     shared_libs: [
-        // "libc",
-        "libhidlbase",
         "libutils",
+        "liblog",
+        "libmedia",
+        "libaudioclient",
         "libcutils",
         "libbinder",
         "libhardware",
-        "libaudioclient",
-        "libmedia_helper",
-        "liblog",
-        "android.hardware.audio@6.0",
-        "android.hardware.audio@6.0-util",
-        "android.hardware.audio.common@6.0",
-        "android.hardware.audio.common@6.0-util",
-        // "framework-permission-aidl-cpp",
-        "libaudioclient_aidl_conversion",
-        "libhardware_legacy",
-        "libmedia",
     ],
     header_libs: [
         "libmedia_headers",
@@ -31,46 +20,10 @@ cc_test {
         "-Wall",
         "-Werror",
     ],
-//     ldflags: [
-//         "-nostdlib",
-//     ],
 }
 
-
 cc_test {
-    name: "audiorecord_test_client",
-    srcs: ["audiorecord_test_client.cpp"],
-    shared_libs: [
-        // "libc",
-        "libhidlbase",
-        "libutils",
-        "libcutils",
-        "libbinder",
-        "libhardware",
-        "libaudioclient",
-        "libmedia_helper",
-        "liblog",
-        "android.hardware.audio@6.0",
-        "android.hardware.audio@6.0-util",
-        "android.hardware.audio.common@6.0",
-        "android.hardware.audio.common@6.0-util",
-        // "framework-permission-aidl-cpp",
-        "libaudioclient_aidl_conversion",
-        "libhardware_legacy",
-        "libmedia",
-    ],
-    header_libs: [
-        "libmedia_headers",
-        "libmediametrics_headers",
-    ],
-    gtest: false,
-    cflags: [
-        "-Wextra",
-        "-Wno-unused-parameter",
-        "-Wall",
-        "-Werror",
-    ],
-//     ldflags: [
-//         "-nostdlib",
-//     ],
+    name: "audio_test_client",
+    defaults: ["audio_test_client_defaults"],
+    srcs: ["audio_test_client.cpp"],
 }
