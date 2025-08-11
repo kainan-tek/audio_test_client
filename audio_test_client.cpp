@@ -569,13 +569,13 @@ int32_t recordAudio(
     }
 
     /************** Audio recording loop **************/
-    int32_t bytesRead = 0;
-    int32_t totalBytesRead = 0;
+    int32_t bytesRead = 0;      // bytes read from AudioRecord
+    int32_t totalBytesRead = 0; // total bytes read from AudioRecord
     size_t bufferSize = frameCount * channelCount * bytesPerSample;
     int32_t bytesPerSecond = sampleRate * channelCount * bytesPerSample;
-    const int32_t kRetryDelayUs = 1000; // 1ms
-    const int32_t kMaxRetries = 3;
-    const int32_t kProgressReportInterval = 10; // seconds
+    const int32_t kRetryDelayUs = 1000;         // 1ms delay for retry
+    const int32_t kMaxRetries = 3;              // max retries
+    const int32_t kProgressReportInterval = 10; // report progress every 10 seconds
 
     // Use RAII for buffer management
     BufferManager bufferManager(bufferSize);
@@ -623,6 +623,7 @@ int32_t recordAudio(
             break;
         }
 
+        // Update total bytes read
         totalBytesRead += bytesRead;
         UpdateSizes(fileManager.getStream(), totalBytesRead); // update RIFF chunk size and data chunk size
 
@@ -803,7 +804,7 @@ int32_t playAudio(
         return -1;
     }
 
-    /************** params check **************/
+    /************** AudioTrack init check **************/
     if (audioTrack->initCheck() != NO_ERROR)
     {
         printf("Error: AudioTrack init check failed\n");
@@ -828,14 +829,14 @@ int32_t playAudio(
     }
 
     /************** audio playback loop **************/
-    int32_t bytesRead = 0;
-    int32_t bytesWritten = 0;
-    int32_t totalBytesPlayed = 0;
+    int32_t bytesRead = 0;        // Number of bytes read from file
+    int32_t bytesWritten = 0;     // Number of bytes written to AudioTrack
+    int32_t totalBytesPlayed = 0; // Total bytes played by AudioTrack
     size_t bufferSize = frameCount * channelCount * bytesPerSample;
     int32_t bytesPerSecond = sampleRate * channelCount * bytesPerSample;
-    const int32_t kRetryDelayUs = 1000; // 1ms
-    const int32_t kMaxRetries = 3;
-    const int32_t kProgressReportInterval = 10; // seconds
+    const int32_t kRetryDelayUs = 1000;         // 1ms retry delay
+    const int32_t kMaxRetries = 3;              // max retries
+    const int32_t kProgressReportInterval = 10; // report progress every 10 seconds
 
     // Use RAII for buffer management
     BufferManager bufferManager(bufferSize);
@@ -1098,12 +1099,12 @@ int32_t duplexAudio(
     }
 
     /************** duplex audio loop **************/
-    int32_t bytesRead = 0;
-    int32_t bytesWritten = 0;
-    int32_t totalBytesRead = 0;
+    int32_t bytesRead = 0;      // Number of bytes read from AudioRecord
+    int32_t bytesWritten = 0;   // Number of bytes written to AudioTrack
+    int32_t totalBytesRead = 0; // Total number of bytes read from AudioRecord
     size_t bufferSize = recordFrameCount * channelCount * bytesPerSample;
-    const int32_t kRetryDelayUs = 1000; // 1ms
-    const int32_t maxRetries = 3;
+    const int32_t kRetryDelayUs = 1000; // 1ms retry delay
+    const int32_t kMaxRetries = 3;      // max retries
 
     // Use RAII for buffer management
     BufferManager recordBufferManager(bufferSize);
@@ -1118,85 +1119,72 @@ int32_t duplexAudio(
     while (recording && playing)
     {
         // Record audio
-        if (recording)
+        bytesRead = audioRecord->read(recordBuffer, bufferSize);
+        if (bytesRead < 0)
         {
-            bytesRead = audioRecord->read(recordBuffer, bufferSize);
-            if (bytesRead < 0)
+            printf("Warning: AudioRecord read returned error %d, retry %d/%d\n", bytesRead, recordRetryCount + 1, kMaxRetries);
+            recordRetryCount++;
+            if (recordRetryCount >= kMaxRetries)
             {
-                printf("Warning: AudioRecord read returned error %d, retry %d/%d\n", bytesRead, recordRetryCount + 1, maxRetries);
-                recordRetryCount++;
-                if (recordRetryCount >= maxRetries)
+                printf("Error: AudioRecord read failed after %d retries\n", kMaxRetries);
+                recording = false;
+                break;
+            }
+            usleep(kRetryDelayUs); // wait before retry
+            continue;
+        }
+        else if (bytesRead == 0)
+        {
+            // No data available, but not an error
+            printf("Warning: AudioRecord read returned 0 bytes\n");
+            usleep(kRetryDelayUs); // wait before retry
+            continue;
+        }
+
+        // Successfully read data, reset retry count
+        recordRetryCount = 0;
+
+        // Write recorded data to file
+        fileManager.getStream().write(recordBuffer, bytesRead);
+        if (fileManager.getStream().fail())
+        {
+            printf("Error: Failed to write to output file\n");
+            recording = false;
+            playing = false;
+            break;
+        }
+        // Update total bytes read
+        totalBytesRead += bytesRead;
+        UpdateSizes(fileManager.getStream(), totalBytesRead); // update RIFF chunk size and data chunk size
+
+        // quit if totalBytesRead exceeds limit (1GB)
+        if (totalBytesRead >= MAX_DATA_SIZE)
+        {
+            printf("Warning: AudioRecord data size exceeds limit: %d MB\n", MAX_DATA_SIZE / (1024 * 1024));
+            recording = false;
+        }
+
+        // Play the recorded data
+        bytesWritten = 0;
+        playRetryCount = 0;
+        while (bytesWritten < bytesRead && playing)
+        {
+            int32_t written = audioTrack->write(recordBuffer + bytesWritten, bytesRead - bytesWritten);
+            if (written < 0)
+            {
+                printf("Warning: AudioTrack write failed with error %d, retry %d/%d\n", written, playRetryCount + 1, kMaxRetries);
+                playRetryCount++;
+                if (playRetryCount >= kMaxRetries)
                 {
-                    printf("Error: AudioRecord read failed after %d retries\n", maxRetries);
-                    recording = false;
+                    printf("Error: AudioTrack write failed after %d retries\n", kMaxRetries);
+                    playing = false;
                     break;
                 }
                 usleep(kRetryDelayUs); // wait before retry
                 continue;
             }
-            else if (bytesRead == 0)
-            {
-                // No data available, but not an error
-                printf("Warning: AudioRecord read returned 0 bytes\n");
-                usleep(kRetryDelayUs); // wait before retry
-                continue;
-            }
-            else
-            {
-                // Successfully read data, reset retry count
-                recordRetryCount = 0;
-
-                // Write to file
-                fileManager.getStream().write(recordBuffer, bytesRead);
-                if (fileManager.getStream().fail())
-                {
-                    printf("Error: Failed to write to output file\n");
-                    recording = false;
-                    playing = false;
-                    break;
-                }
-
-                totalBytesRead += bytesRead;
-                UpdateSizes(fileManager.getStream(), totalBytesRead); // update RIFF chunk size and data chunk size
-
-                if (totalBytesRead >= MAX_DATA_SIZE)
-                {
-                    printf("Warning: AudioRecord data size exceeds limit: %d MB\n", MAX_DATA_SIZE / (1024 * 1024));
-                    recording = false;
-                    playing = false;
-                    break;
-                }
-
-                // Play the recorded data
-                bytesWritten = 0;
-                playRetryCount = 0;
-                while (bytesWritten < bytesRead && playing)
-                {
-                    int32_t written = audioTrack->write(recordBuffer + bytesWritten, bytesRead - bytesWritten);
-                    if (written < 0)
-                    {
-                        printf("Warning: AudioTrack write failed with error %d, retry %d/%d\n", written, playRetryCount + 1, maxRetries);
-                        playRetryCount++;
-                        if (playRetryCount >= maxRetries)
-                        {
-                            printf("Error: AudioTrack write failed after %d retries\n", maxRetries);
-                            playing = false;
-                            break;
-                        }
-                        usleep(kRetryDelayUs); // wait before retry
-                        continue;
-                    }
-                    bytesWritten += written;
-                    playRetryCount = 0; // Reset retry count on successful write
-                }
-
-                // Check if play failed
-                if (!playing)
-                {
-                    recording = false;
-                    break;
-                }
-            }
+            bytesWritten += written;
+            playRetryCount = 0; // Reset retry count on successful write
         }
     }
 
