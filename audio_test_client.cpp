@@ -13,6 +13,7 @@
 #include <time.h>
 #include <vector>
 #include <memory>
+#include <signal.h>
 #include <utils/Log.h>
 #include <media/AudioRecord.h>
 #include <media/AudioTrack.h>
@@ -22,204 +23,14 @@
 using namespace android;
 using android::content::AttributionSourceState;
 
-#define MAX_DATA_SIZE 1 * 1024 * 1024 * 1024 // 1GB
+// max data size for recording
+#define MAX_DATA_SIZE 1024 * 1024 * 1024 // 1GB
 
-/************************** WAV header function ******************************/
-struct WAVHeader
-{
-    // WAV header size is 44 bytes
-    // format = RIFF + fmt + data
-    char riffID[4];         // "RIFF"
-    uint32_t riffSize;      // 36 + (numSamples * numChannels * bytesPerSample)
-    char waveID[4];         // "WAVE"
-    char fmtID[4];          // "fmt "
-    uint32_t fmtSize;       // 16 for PCM; 18 for IEEE float
-    uint16_t audioFormat;   // 1 for PCM; 3 for IEEE float
-    uint16_t numChannels;   // 1 for mono; 2 for stereo
-    uint32_t sampleRate;    // sample rate
-    uint32_t byteRate;      // sampleRate * numChannels * bytesPerSample
-    uint16_t blockAlign;    // numChannels * bytesPerSample
-    uint16_t bitsPerSample; // 8 for 8-bit; 16 for 16-bit; 32 for 32-bit
-    char dataID[4];         // "data"
-    uint32_t dataSize;      // numSamples * numChannels * bytesPerSample
+class WAVFile;       // Forward declaration
+class BufferManager; // Forward declaration
 
-    /**
-     * Writes the WAV file header to the specified output stream.
-     *
-     * @param out The output stream to write the header to.
-     */
-    void write(std::ofstream &out)
-    {
-        out.write(riffID, 4);                 // "RIFF"
-        out.write((char *)&riffSize, 4);      // 36 + (numSamples * numChannels * bytesPerSample)
-        out.write(waveID, 4);                 // "WAVE"
-        out.write(fmtID, 4);                  // "fmt "
-        out.write((char *)&fmtSize, 4);       // 16 for PCM; 18 for IEEE float
-        out.write((char *)&audioFormat, 2);   // 1 for PCM; 3 for IEEE float
-        out.write((char *)&numChannels, 2);   // 1 for mono; 2 for stereo
-        out.write((char *)&sampleRate, 4);    // sample rate
-        out.write((char *)&byteRate, 4);      // sampleRate * numChannels * bytesPerSample
-        out.write((char *)&blockAlign, 2);    // numChannels * bytesPerSample
-        out.write((char *)&bitsPerSample, 2); // 8 for 8-bit; 16 for 16-bit; 32 for 32-bit
-        out.write(dataID, 4);                 // "data"
-        out.write((char *)&dataSize, 4);      // numSamples * numChannels * bytesPerSample
-    }
-
-    /**
-     * Reads the WAV file header from the specified input stream.
-     *
-     * @param in The input stream to read the header from.
-     */
-    void read(std::ifstream &in)
-    {
-        in.read(riffID, 4);                 // "RIFF"
-        in.read((char *)&riffSize, 4);      // 36 + (numSamples * numChannels * bytesPerSample)
-        in.read(waveID, 4);                 // "WAVE"
-        in.read(fmtID, 4);                  // "fmt "
-        in.read((char *)&fmtSize, 4);       // 16 for PCM; 18 for IEEE float
-        in.read((char *)&audioFormat, 2);   // 1 for PCM; 3 for IEEE float
-        in.read((char *)&numChannels, 2);   // 1 for mono; 2 for stereo
-        in.read((char *)&sampleRate, 4);    // sample rate
-        in.read((char *)&byteRate, 4);      // sampleRate * numChannels * bytesPerSample
-        in.read((char *)&blockAlign, 2);    // numChannels * bytesPerSample
-        in.read((char *)&bitsPerSample, 2); // 8 for 8-bit; 16 for 16-bit; 32 for 32-bit
-        in.read(dataID, 4);                 // "data"
-        in.read((char *)&dataSize, 4);      // numSamples * numChannels * bytesPerSample
-    }
-
-    /** Prints the WAV file header. */
-    void print()
-    {
-        printf("RiffID: %s\n", riffID);
-        printf("RiffSize: %d\n", riffSize);
-        printf("WaveID: %s\n", waveID);
-        printf("FmtID: %s\n", fmtID);
-        printf("FmtSize: %d\n", fmtSize);
-        printf("AudioFormat: %d\n", audioFormat);
-        printf("NumChannels: %d\n", numChannels);
-        printf("SampleRate: %d\n", sampleRate);
-        printf("ByteRate: %d\n", byteRate);
-        printf("BlockAlign: %d\n", blockAlign);
-        printf("BitsPerSample: %d\n", bitsPerSample);
-        printf("DataID: %s\n", dataID);
-        printf("DataSize: %d\n", dataSize);
-    }
-};
-
-/**
- * Writes the WAV file header to the specified output stream.
- *
- * @param outFile The output stream to write the header to.
- * @param numSamples The number of samples in the audio data.
- * @param sampleRate The sample rate of the audio data.
- * @param numChannels The number of channels in the audio data.
- * @param bitsPerSample The number of bits per sample in the audio data.
- *
- * @return True if the header was written successfully, false otherwise.
- */
-bool writeWAVHeader(std::ofstream &outFile, uint32_t numSamples, uint32_t sampleRate, uint32_t numChannels, uint32_t bitsPerSample)
-{
-    if (!outFile.is_open())
-    {
-        return false;
-    }
-
-    WAVHeader header;
-
-    // RIFF chunk
-    header.riffID[0] = 'R';
-    header.riffID[1] = 'I';
-    header.riffID[2] = 'F';
-    header.riffID[3] = 'F';
-
-    uint32_t bytesPerSample = bitsPerSample / 8;
-    header.riffSize = 36 + numSamples * numChannels * bytesPerSample; // 36 = header size after RIFF
-    header.waveID[0] = 'W';
-    header.waveID[1] = 'A';
-    header.waveID[2] = 'V';
-    header.waveID[3] = 'E';
-
-    // fmt subchunk
-    header.fmtID[0] = 'f';
-    header.fmtID[1] = 'm';
-    header.fmtID[2] = 't';
-    header.fmtID[3] = ' ';
-
-    header.fmtSize = 16;
-    header.audioFormat = 1; // PCM
-    header.numChannels = numChannels;
-    header.sampleRate = sampleRate;
-
-    header.byteRate = sampleRate * numChannels * bytesPerSample;
-    header.blockAlign = numChannels * bytesPerSample;
-    header.bitsPerSample = bitsPerSample;
-
-    // data subchunk
-    header.dataID[0] = 'd';
-    header.dataID[1] = 'a';
-    header.dataID[2] = 't';
-    header.dataID[3] = 'a';
-    header.dataSize = numSamples * numChannels * bytesPerSample;
-
-    header.write(outFile);
-    // header.print();
-
-    return true;
-}
-
-/**
- * Reads the WAV file header from the specified input stream.
- *
- * @param inFile The input stream to read the header from.
- * @param header The WAVHeader object to store the header in.
- *
- * @return True if the header was read successfully, false otherwise.
- */
-bool readWAVHeader(const std::string &filename, WAVHeader &header)
-{
-    std::ifstream in(filename, std::ios::binary | std::ios::in);
-    if (!in.is_open())
-    {
-        return false;
-    }
-    header.read(in);
-    in.close();
-    return true;
-}
-
-/**
- * Updates the sizes of the RIFF and data chunks in the WAV file.
- *
- * @param outfile The output stream to write the updated header to.
- * @param data_chunk_size The size of the data chunk in bytes.
- */
-void UpdateSizes(std::ofstream &outfile, uint32_t data_chunk_size)
-{
-    // record current position
-    std::streampos current_position = outfile.tellp();
-
-    // calculates RIFF chunk size and data chunk size
-    uint32_t riff_size = 36 + data_chunk_size;
-    uint32_t data_size = data_chunk_size;
-
-    // move to riff size field and update
-    outfile.seekp(4, std::ios::beg);
-    outfile.write(reinterpret_cast<const char *>(&riff_size), sizeof(riff_size));
-
-    // move to data size field and update
-    outfile.seekp(40, std::ios::beg);
-    outfile.write(reinterpret_cast<const char *>(&data_size), sizeof(data_size));
-
-    // return to record position
-    outfile.seekp(current_position);
-}
-
-void get_format_time(char *format_time)
-{
-    time_t t = time(nullptr);
-    struct tm *now = localtime(&t);
-    strftime(format_time, 32, "%Y%m%d_%H.%M.%S", now);
-}
+// Global pointer to WAVFile for signal handling
+static WAVFile *g_wavFile = nullptr;
 
 /************************** Audio Mode Definitions ******************************/
 enum AudioMode
@@ -364,76 +175,170 @@ static void help()
     printf("    Duplex: audio_test_client -m2 -s1 -r48000 -c2 -f1 -F1 -u5 -C0 -O4 -z480\n");
 }
 
-// RAII wrapper for buffer management
-class BufferManager
+int32_t recordAudio(
+    audio_source_t inputSource,
+    int32_t sampleRate,
+    int32_t channelCount,
+    audio_format_t format,
+    audio_input_flags_t inputFlag,
+    size_t minFrameCount,
+    const std::string &recordFile);
+
+int32_t playAudio(
+    audio_usage_t usage,
+    audio_content_type_t contentType,
+    audio_output_flags_t outputFlag,
+    size_t minFrameCount,
+    const std::string &playFile);
+
+int32_t duplexAudio(
+    audio_source_t inputSource,
+    int32_t sampleRate,
+    int32_t channelCount,
+    audio_format_t format,
+    audio_input_flags_t inputFlag,
+    audio_usage_t usage,
+    audio_content_type_t contentType,
+    audio_output_flags_t outputFlag,
+    size_t minFrameCount,
+    const std::string &recordFile);
+
+void signalHandler(int signal);
+void get_format_time(char *format_time);
+
+/************************** Main function ******************************/
+int32_t main(int32_t argc, char **argv)
 {
-private:
-    std::unique_ptr<char[]> buffer;
-    size_t size;
+    // Default parameters
+    AudioMode mode = MODE_INVALID; // default mode is invalid
 
-public:
-    BufferManager(size_t bufferSize) : size(bufferSize)
+    // Record parameters
+    audio_source_t inputSource = AUDIO_SOURCE_HOTWORD;     // default audio source
+    int32_t recordSampleRate = 48000;                      // default sample rate
+    int32_t recordChannelCount = 1;                        // default channel count
+    audio_format_t recordFormat = AUDIO_FORMAT_PCM_16_BIT; // default format
+    audio_input_flags_t inputFlag = AUDIO_INPUT_FLAG_NONE; // default input flag
+    size_t recordMinFrameCount = 0;                        // will be calculated
+    // 根据传入参数和当前时间自动生成带时间戳的录音文件，如果在命令行参数后指定录音文件，则不会自动生成。
+    // 不可在此指定录音文件，要么在命令行参数后指定，要么不指定，自动生成带时间戳的录音文件。
+    std::string recordFilePath = "";
+
+    // Play parameters
+    audio_usage_t usage = AUDIO_USAGE_MEDIA;                       // default audio usage
+    audio_content_type_t contentType = AUDIO_CONTENT_TYPE_UNKNOWN; // default content type
+    audio_output_flags_t outputFlag = AUDIO_OUTPUT_FLAG_NONE;      // default output flag
+    size_t playMinFrameCount = 0;                                  // will be calculated
+    // 如果没有在命令行参数后指定播放文件，则使用此默认的音频文件。
+    std::string playFilePath = "/data/audio_test.wav"; // default audio file path
+
+    /************** parse input params **************/
+    int32_t opt = 0;
+    while ((opt = getopt(argc, argv, "m:s:r:c:f:F:u:C:O:z:h")) != -1)
     {
-        buffer = std::make_unique<char[]>(bufferSize);
-    }
-
-    ~BufferManager() = default;
-
-    char *get() { return buffer.get(); }
-    size_t getSize() const { return size; }
-};
-
-// RAII wrapper for file management (output)
-class OutputFileManager
-{
-private:
-    std::ofstream outFile;
-    std::string filePath;
-
-public:
-    OutputFileManager(const std::string &path) : filePath(path)
-    {
-        outFile.open(filePath, std::ios::binary | std::ios::out);
-    }
-
-    ~OutputFileManager()
-    {
-        if (outFile.is_open())
+        switch (opt)
         {
-            outFile.close();
+        case 'm': // mode
+            mode = static_cast<AudioMode>(atoi(optarg));
+            break;
+        case 's': // audio source
+            inputSource = static_cast<audio_source_t>(atoi(optarg));
+            break;
+        case 'r': // sample rate
+            recordSampleRate = atoi(optarg);
+            break;
+        case 'c': // channel count
+            recordChannelCount = atoi(optarg);
+            break;
+        case 'f': // format
+            recordFormat = static_cast<audio_format_t>(atoi(optarg));
+            break;
+        case 'F': // input flag
+            inputFlag = static_cast<audio_input_flags_t>(atoi(optarg));
+            break;
+        case 'u': // audio usage
+            usage = static_cast<audio_usage_t>(atoi(optarg));
+            break;
+        case 'C': // audio content type
+            contentType = static_cast<audio_content_type_t>(atoi(optarg));
+            break;
+        case 'O': // output flag
+            outputFlag = static_cast<audio_output_flags_t>(atoi(optarg));
+            break;
+        case 'z': // min frame count
+            recordMinFrameCount = atoi(optarg);
+            playMinFrameCount = recordMinFrameCount; // use same min frame count for play if not specified separately
+            break;
+        case 'h': // help for use
+            help();
+            return 0;
+        default:
+            help();
+            return -1;
         }
     }
 
-    bool isOpen() const { return outFile.is_open(); }
-    std::ofstream &getStream() { return outFile; }
-    const std::string &getPath() const { return filePath; }
-};
-
-// RAII wrapper for file management (input)
-class InputFileManager
-{
-private:
-    std::ifstream inFile;
-    std::string filePath;
-
-public:
-    InputFileManager(const std::string &path) : filePath(path)
+    /* get audio file path */
+    if (optind < argc)
     {
-        inFile.open(filePath, std::ios::binary | std::ios::in);
-    }
-
-    ~InputFileManager()
-    {
-        if (inFile.is_open())
+        std::string tmpFile = std::string{argv[optind]};
+        if (mode == MODE_PLAY)
         {
-            inFile.close();
+            playFilePath = tmpFile;
+        }
+        else
+        {
+            recordFilePath = tmpFile;
         }
     }
 
-    bool isOpen() const { return inFile.is_open(); }
-    std::ifstream &getStream() { return inFile; }
-    const std::string &getPath() const { return filePath; }
-};
+    switch (mode)
+    {
+    case MODE_RECORD:
+        printf("Running in RECORD mode\n");
+        return recordAudio(inputSource, recordSampleRate, recordChannelCount, recordFormat,
+                           inputFlag, recordMinFrameCount, recordFilePath);
+
+    case MODE_PLAY:
+        printf("Running in PLAY mode\n");
+        return playAudio(usage, contentType, outputFlag, playMinFrameCount, playFilePath);
+
+    case MODE_DUPLEX:
+        printf("Running in DUPLEX mode (record and play simultaneously)\n");
+        return duplexAudio(inputSource, recordSampleRate, recordChannelCount, recordFormat,
+                           inputFlag, usage, contentType, outputFlag,
+                           recordMinFrameCount, recordFilePath);
+
+    default:
+        printf("Error: Invalid mode specified: %d\n", static_cast<int>(mode));
+        help();
+        return -1;
+    }
+
+    return 0;
+}
+
+// Signal handler for SIGINT (Ctrl+C)
+void signalHandler(int signal)
+{
+    if (signal == SIGINT)
+    {
+        printf("\nReceived SIGINT (Ctrl+C), finalizing recording...\n");
+        if (g_wavFile != nullptr)
+        {
+            // g_wavFile->updateHeader(); // Update header before exit
+            g_wavFile->finalize(); // Finalize the WAV file
+            g_wavFile = nullptr;   // Clear the pointer
+        }
+        exit(0);
+    }
+}
+
+void get_format_time(char *format_time)
+{
+    time_t t = time(nullptr);
+    struct tm *now = localtime(&t);
+    strftime(format_time, 32, "%Y%m%d_%H.%M.%S", now);
+}
 
 /************************** Audio Record Function ******************************/
 int32_t recordAudio(
@@ -543,21 +448,19 @@ int32_t recordAudio(
     }
     printf("Recording audio to file: %s\n", audioFilePath.c_str());
 
-    /************** open output file **************/
-    OutputFileManager fileManager(audioFilePath);
-    if (!fileManager.isOpen() || fileManager.getStream().fail())
+    /************** create WAV file **************/
+    WAVFile wavFile;
+    if (!wavFile.createForWriting(audioFilePath, sampleRate, channelCount, bytesPerSample * 8))
     {
-        printf("Error: can't open output file %s\n", audioFilePath.c_str());
+        printf("Error: can't create output file %s\n", audioFilePath.c_str());
         return -1;
     }
 
-    /************** write audio file header **************/
-    int32_t numSamples = 0;
-    if (!writeWAVHeader(fileManager.getStream(), numSamples, sampleRate, channelCount, bytesPerSample * 8))
-    {
-        printf("Error: writeWAVHeader failed\n");
-        return -1;
-    }
+    // Set global WAV file pointer for signal handling
+    g_wavFile = &wavFile;
+
+    // Register signal handler for SIGINT (Ctrl+C)
+    signal(SIGINT, signalHandler);
 
     /************** AudioRecord start **************/
     printf("AudioRecord start\n");
@@ -565,6 +468,7 @@ int32_t recordAudio(
     if (startResult != NO_ERROR)
     {
         printf("Error: AudioRecord start failed with status %d\n", startResult);
+        wavFile.close(); // Close file without finalizing
         return -1;
     }
 
@@ -616,8 +520,8 @@ int32_t recordAudio(
         }
 
         // bytesRead > 0 at this point
-        fileManager.getStream().write(buffer, bytesRead);
-        if (fileManager.getStream().fail())
+        size_t bytesWritten = wavFile.writeData(buffer, bytesRead);
+        if (bytesWritten != static_cast<size_t>(bytesRead))
         {
             printf("Error: Failed to write to output file\n");
             break;
@@ -625,12 +529,20 @@ int32_t recordAudio(
 
         // Update total bytes read
         totalBytesRead += bytesRead;
-        UpdateSizes(fileManager.getStream(), totalBytesRead); // update RIFF chunk size and data chunk size
+
+        // Periodically update the WAV header to ensure file validity
+        static int32_t headerUpdateCount = 0;
+        headerUpdateCount++;
+        if (headerUpdateCount >= 100)
+        { // Update header every 100 iterations
+            wavFile.updateHeader();
+            headerUpdateCount = 0;
+        }
 
         // Print progress every 10 seconds
         if (totalBytesRead >= nextProgressReport)
         {
-            printf("Recording progress, recorded %d seconds, %d MB\n", totalBytesRead / bytesPerSecond, totalBytesRead / (1024 * 1024));
+            printf("Recording progress: recorded %d seconds, %d MB\n", totalBytesRead / bytesPerSecond, totalBytesRead / (1024 * 1024));
             nextProgressReport += bytesPerSecond * kProgressReportInterval;
         }
 
@@ -645,7 +557,8 @@ int32_t recordAudio(
     printf("AudioRecord stop, total bytes recorded: %d\n", totalBytesRead);
     audioRecord->stop();
 
-    // Ensure file is properly closed through RAII
+    // Finalize and close WAV file
+    wavFile.finalize();
     printf("Recording finished. Audio file: %s\n", audioFilePath.c_str());
 
     return 0;
@@ -659,10 +572,6 @@ int32_t playAudio(
     size_t minFrameCount,
     const std::string &playFile)
 {
-    // Variables to store audio parameters read from WAV file
-    int32_t sampleRate;
-    int32_t channelCount;
-    audio_format_t format;
     // Validate input file
     if (playFile.empty())
     {
@@ -677,17 +586,18 @@ int32_t playAudio(
         return -1;
     }
 
-    /* read wav header */
-    WAVHeader header;
-    if (!readWAVHeader(playFile, header))
+    /************** open WAV file for reading **************/
+    WAVFile wavFile;
+    if (!wavFile.openForReading(playFile))
     {
-        printf("Error: Failed to read WAV header\n");
+        printf("Error: Failed to open WAV file %s\n", playFile.c_str());
         return -1;
     }
-    // header.print();
 
-    sampleRate = header.sampleRate;
-    channelCount = header.numChannels;
+    // Get audio parameters from WAV file
+    int32_t sampleRate = wavFile.getSampleRate();
+    int32_t channelCount = wavFile.getNumChannels();
+    audio_format_t format = wavFile.getAudioFormat();
 
     // Validate sample rate
     if (sampleRate <= 0)
@@ -703,31 +613,10 @@ int32_t playAudio(
         return -1;
     }
 
-    // Determine format based on WAV header
-    if ((header.audioFormat == 1) && (header.bitsPerSample == 8))
+    // Validate format
+    if (format == AUDIO_FORMAT_INVALID)
     {
-        format = AUDIO_FORMAT_PCM_8_BIT;
-    }
-    else if ((header.audioFormat == 1) && (header.bitsPerSample == 16))
-    {
-        format = AUDIO_FORMAT_PCM_16_BIT;
-    }
-    else if ((header.audioFormat == 1) && (header.bitsPerSample == 24))
-    {
-        format = AUDIO_FORMAT_PCM_24_BIT_PACKED;
-    }
-    else if ((header.audioFormat == 1) && (header.bitsPerSample == 32))
-    {
-        format = AUDIO_FORMAT_PCM_32_BIT;
-    }
-    else if ((header.audioFormat == 3) && (header.bitsPerSample == 32))
-    {
-        format = AUDIO_FORMAT_PCM_FLOAT;
-    }
-    else
-    {
-        printf("Error: Unsupported format and bitsPerSample in WAV header: audioFormat=%d, bitsPerSample=%d\n",
-               header.audioFormat, header.bitsPerSample);
+        printf("Error: Unsupported format in WAV header\n");
         return -1;
     }
     printf("Parsed WAV header params: sampleRate:%d, channelCount:%d, format:%d\n", sampleRate, channelCount, format);
@@ -811,14 +700,6 @@ int32_t playAudio(
         return -1;
     }
 
-    /************** open audio file for playback **************/
-    InputFileManager fileManager(playFile);
-    if (!fileManager.isOpen() || !fileManager.getStream().good())
-    {
-        printf("Error: Can't open audio file %s\n", playFile.c_str());
-        return -1;
-    }
-
     /************** audioTrack start **************/
     printf("AudioTrack start\n");
     status_t startResult = audioTrack->start();
@@ -842,18 +723,14 @@ int32_t playAudio(
     BufferManager bufferManager(bufferSize);
     char *buffer = bufferManager.get();
 
-    // Skip WAV header for playback
-    fileManager.getStream().seekg(sizeof(WAVHeader), std::ios::beg);
-
     printf("Playback started. Playing audio from: %s\n", playFile.c_str());
 
     int32_t retryCount = 0;
     int32_t nextProgressReport = bytesPerSecond * kProgressReportInterval;
     while (true)
     {
-        fileManager.getStream().read(buffer, bufferSize);
-        bytesRead = fileManager.getStream().gcount();
-        if (fileManager.getStream().eof() || bytesRead <= 0)
+        bytesRead = wavFile.readData(buffer, bufferSize);
+        if (bytesRead <= 0)
         {
             printf("End of file reached or read error\n");
             break;
@@ -885,7 +762,7 @@ int32_t playAudio(
         // Print progress every 10 seconds
         if (totalBytesPlayed >= nextProgressReport)
         {
-            printf("Playing progress, played %d seconds, %d MB\n", totalBytesPlayed / bytesPerSecond, totalBytesPlayed / (1024 * 1024));
+            printf("Playing progress: played %d seconds, %d MB\n", totalBytesPlayed / bytesPerSecond, totalBytesPlayed / (1024 * 1024));
             nextProgressReport += bytesPerSecond * kProgressReportInterval;
         }
     }
@@ -894,7 +771,8 @@ int32_t playAudio(
     printf("AudioTrack stop, total bytes played: %d\n", totalBytesPlayed);
     audioTrack->stop();
 
-    // Ensure file is properly closed through RAII
+    // Close WAV file
+    wavFile.close();
     printf("Playing finished. Audio file: %s\n", playFile.c_str());
 
     return 0;
@@ -1064,21 +942,19 @@ int32_t duplexAudio(
     }
     printf("Recording audio to file: %s\n", audioFilePath.c_str());
 
-    /************** open output file **************/
-    OutputFileManager fileManager(audioFilePath);
-    if (!fileManager.isOpen() || fileManager.getStream().fail())
+    /************** create WAV file **************/
+    WAVFile wavFile;
+    if (!wavFile.createForWriting(audioFilePath, sampleRate, channelCount, bytesPerSample * 8))
     {
-        printf("Error: can't open output file %s\n", audioFilePath.c_str());
+        printf("Error: can't create output file %s\n", audioFilePath.c_str());
         return -1;
     }
 
-    /************** write audio file header **************/
-    int32_t numSamples = 0;
-    if (!writeWAVHeader(fileManager.getStream(), numSamples, sampleRate, channelCount, bytesPerSample * 8))
-    {
-        printf("Error: writeWAVHeader failed\n");
-        return -1;
-    }
+    // Set global WAV file pointer for signal handling
+    g_wavFile = &wavFile;
+
+    // Register signal handler for SIGINT (Ctrl+C)
+    signal(SIGINT, signalHandler);
 
     /************** start AudioRecord and AudioTrack **************/
     printf("AudioRecord start\n");
@@ -1086,6 +962,7 @@ int32_t duplexAudio(
     if (recordStartResult != NO_ERROR)
     {
         printf("Error: AudioRecord start failed with status %d\n", recordStartResult);
+        wavFile.close(); // Close file without finalizing
         return -1;
     }
 
@@ -1095,6 +972,7 @@ int32_t duplexAudio(
     {
         printf("Error: AudioTrack start failed with status %d\n", playStartResult);
         audioRecord->stop();
+        wavFile.close(); // Close file without finalizing
         return -1;
     }
 
@@ -1145,17 +1023,26 @@ int32_t duplexAudio(
         recordRetryCount = 0;
 
         // Write recorded data to file
-        fileManager.getStream().write(recordBuffer, bytesRead);
-        if (fileManager.getStream().fail())
+        size_t bytesWrittenToFile = wavFile.writeData(recordBuffer, bytesRead);
+        if (bytesWrittenToFile != static_cast<size_t>(bytesRead))
         {
             printf("Error: Failed to write to output file\n");
             recording = false;
             playing = false;
             break;
         }
+
         // Update total bytes read
         totalBytesRead += bytesRead;
-        UpdateSizes(fileManager.getStream(), totalBytesRead); // update RIFF chunk size and data chunk size
+
+        // Periodically update the WAV header to ensure file validity
+        static int32_t headerUpdateCount = 0;
+        headerUpdateCount++;
+        if (headerUpdateCount >= 100)
+        { // Update header every 100 iterations
+            wavFile.updateHeader();
+            headerUpdateCount = 0;
+        }
 
         // quit if totalBytesRead exceeds limit (1GB)
         if (totalBytesRead >= MAX_DATA_SIZE)
@@ -1195,119 +1082,381 @@ int32_t duplexAudio(
     printf("AudioTrack stop\n");
     audioTrack->stop();
 
+    // Finalize and close WAV file
+    wavFile.finalize();
     printf("Total bytes read: %d\n", totalBytesRead);
     printf("Duplex audio completed. Recording saved to: %s\n", audioFilePath.c_str());
 
     return 0;
 }
 
-/************************** Main function ******************************/
-int32_t main(int32_t argc, char **argv)
+/************************** WAV File Management ******************************/
+class WAVFile
 {
-    // Default parameters
-    AudioMode mode = MODE_INVALID; // default mode is invalid
-
-    // Record parameters
-    audio_source_t inputSource = AUDIO_SOURCE_HOTWORD;     // default audio source
-    int32_t recordSampleRate = 48000;                      // default sample rate
-    int32_t recordChannelCount = 1;                        // default channel count
-    audio_format_t recordFormat = AUDIO_FORMAT_PCM_16_BIT; // default format
-    audio_input_flags_t inputFlag = AUDIO_INPUT_FLAG_NONE; // default input flag
-    size_t recordMinFrameCount = 0;                        // will be calculated
-    // 根据传入参数和当前时间自动生成带时间戳的录音文件，如果在命令行参数后指定录音文件，则不会自动生成。
-    // 不可在此指定录音文件，要么在命令行参数后指定，要么不指定，自动生成带时间戳的录音文件。
-    std::string recordFilePath = "";
-
-    // Play parameters
-    audio_usage_t usage = AUDIO_USAGE_MEDIA;                       // default audio usage
-    audio_content_type_t contentType = AUDIO_CONTENT_TYPE_UNKNOWN; // default content type
-    audio_output_flags_t outputFlag = AUDIO_OUTPUT_FLAG_NONE;      // default output flag
-    size_t playMinFrameCount = 0;                                  // will be calculated
-    // 如果没有在命令行参数后指定播放文件，则使用此默认的音频文件。
-    std::string playFilePath = "/data/audio_test.wav"; // default audio file path
-
-    /************** parse input params **************/
-    int32_t opt = 0;
-    while ((opt = getopt(argc, argv, "m:s:r:c:f:F:u:C:O:z:h")) != -1)
+public:
+    struct Header
     {
-        switch (opt)
+        // WAV header size is 44 bytes
+        // format = RIFF + fmt + data
+        char riffID[4];         // "RIFF"
+        uint32_t riffSize;      // 36 + (numSamples * numChannels * bytesPerSample)
+        char waveID[4];         // "WAVE"
+        char fmtID[4];          // "fmt "
+        uint32_t fmtSize;       // 16 for PCM; 18 for IEEE float
+        uint16_t audioFormat;   // 1 for PCM; 3 for IEEE float
+        uint16_t numChannels;   // 1 for mono; 2 for stereo
+        uint32_t sampleRate;    // sample rate
+        uint32_t byteRate;      // sampleRate * numChannels * bytesPerSample
+        uint16_t blockAlign;    // numChannels * bytesPerSample
+        uint16_t bitsPerSample; // 8 for 8-bit; 16 for 16-bit; 32 for 32-bit
+        char dataID[4];         // "data"
+        uint32_t dataSize;      // numSamples * numChannels * bytesPerSample
+
+        /**
+         * Writes the WAV file header to the specified output stream.
+         *
+         * @param out The output stream to write the header to.
+         */
+        void write(std::ofstream &out) const
         {
-        case 'm': // mode
-            mode = static_cast<AudioMode>(atoi(optarg));
-            break;
-        case 's': // audio source
-            inputSource = static_cast<audio_source_t>(atoi(optarg));
-            break;
-        case 'r': // sample rate
-            recordSampleRate = atoi(optarg);
-            break;
-        case 'c': // channel count
-            recordChannelCount = atoi(optarg);
-            break;
-        case 'f': // format
-            recordFormat = static_cast<audio_format_t>(atoi(optarg));
-            break;
-        case 'F': // input flag
-            inputFlag = static_cast<audio_input_flags_t>(atoi(optarg));
-            break;
-        case 'u': // audio usage
-            usage = static_cast<audio_usage_t>(atoi(optarg));
-            break;
-        case 'C': // audio content type
-            contentType = static_cast<audio_content_type_t>(atoi(optarg));
-            break;
-        case 'O': // output flag
-            outputFlag = static_cast<audio_output_flags_t>(atoi(optarg));
-            break;
-        case 'z': // min frame count
-            recordMinFrameCount = atoi(optarg);
-            playMinFrameCount = recordMinFrameCount; // use same min frame count for play if not specified separately
-            break;
-        case 'h': // help for use
-            help();
+            out.write(riffID, 4);                 // "RIFF"
+            out.write((char *)&riffSize, 4);      // 36 + (numSamples * numChannels * bytesPerSample)
+            out.write(waveID, 4);                 // "WAVE"
+            out.write(fmtID, 4);                  // "fmt "
+            out.write((char *)&fmtSize, 4);       // 16 for PCM; 18 for IEEE float
+            out.write((char *)&audioFormat, 2);   // 1 for PCM; 3 for IEEE float
+            out.write((char *)&numChannels, 2);   // 1 for mono; 2 for stereo
+            out.write((char *)&sampleRate, 4);    // sample rate
+            out.write((char *)&byteRate, 4);      // sampleRate * numChannels * bytesPerSample
+            out.write((char *)&blockAlign, 2);    // numChannels * bytesPerSample
+            out.write((char *)&bitsPerSample, 2); // 8 for 8-bit; 16 for 16-bit; 32 for 32-bit
+            out.write(dataID, 4);                 // "data"
+            out.write((char *)&dataSize, 4);      // numSamples * numChannels * bytesPerSample
+        }
+
+        /**
+         * Reads the WAV file header from the specified input stream.
+         *
+         * @param in The input stream to read the header from.
+         */
+        void read(std::ifstream &in)
+        {
+            in.read(riffID, 4);                 // "RIFF"
+            in.read((char *)&riffSize, 4);      // 36 + (numSamples * numChannels * bytesPerSample)
+            in.read(waveID, 4);                 // "WAVE"
+            in.read(fmtID, 4);                  // "fmt "
+            in.read((char *)&fmtSize, 4);       // 16 for PCM; 18 for IEEE float
+            in.read((char *)&audioFormat, 2);   // 1 for PCM; 3 for IEEE float
+            in.read((char *)&numChannels, 2);   // 1 for mono; 2 for stereo
+            in.read((char *)&sampleRate, 4);    // sample rate
+            in.read((char *)&byteRate, 4);      // sampleRate * numChannels * bytesPerSample
+            in.read((char *)&blockAlign, 2);    // numChannels * bytesPerSample
+            in.read((char *)&bitsPerSample, 2); // 8 for 8-bit; 16 for 16-bit; 32 for 32-bit
+            in.read(dataID, 4);                 // "data"
+            in.read((char *)&dataSize, 4);      // numSamples * numChannels * bytesPerSample
+        }
+
+        /** Prints the WAV file header. */
+        void print() const
+        {
+            printf("RiffID: %s\n", riffID);
+            printf("RiffSize: %d\n", riffSize);
+            printf("WaveID: %s\n", waveID);
+            printf("FmtID: %s\n", fmtID);
+            printf("FmtSize: %d\n", fmtSize);
+            printf("AudioFormat: %d\n", audioFormat);
+            printf("NumChannels: %d\n", numChannels);
+            printf("SampleRate: %d\n", sampleRate);
+            printf("ByteRate: %d\n", byteRate);
+            printf("BlockAlign: %d\n", blockAlign);
+            printf("BitsPerSample: %d\n", bitsPerSample);
+            printf("DataID: %s\n", dataID);
+            printf("DataSize: %d\n", dataSize);
+        }
+    };
+
+private:
+    Header header_;
+    std::string filePath_;
+    mutable std::fstream fileStream_;
+    bool headerWritten_;
+    std::streampos dataSizePos_; // Position of dataSize field for updates
+
+public:
+    WAVFile() : headerWritten_(false)
+    {
+        // Initialize header with default values
+        memset(&header_, 0, sizeof(Header));
+    }
+
+    /**
+     * Creates a new WAV file for writing with the specified parameters.
+     *
+     * @param filePath The path to the WAV file.
+     * @param sampleRate The sample rate of the audio data.
+     * @param numChannels The number of channels in the audio data.
+     * @param bitsPerSample The number of bits per sample in the audio data.
+     * @return True if the file was created successfully, false otherwise.
+     */
+    bool createForWriting(const std::string &filePath, uint32_t sampleRate, uint32_t numChannels, uint32_t bitsPerSample)
+    {
+        filePath_ = filePath;
+        fileStream_.open(filePath_, std::ios::binary | std::ios::out | std::ios::in | std::ios::trunc);
+        if (!fileStream_.is_open())
+        {
+            return false;
+        }
+
+        // Initialize header
+        strncpy(header_.riffID, "RIFF", 4);
+        strncpy(header_.waveID, "WAVE", 4);
+        strncpy(header_.fmtID, "fmt ", 4);
+        strncpy(header_.dataID, "data", 4);
+
+        header_.fmtSize = 16;
+        header_.audioFormat = 1; // PCM
+        header_.numChannels = numChannels;
+        header_.sampleRate = sampleRate;
+        header_.bitsPerSample = bitsPerSample;
+
+        uint32_t bytesPerSample = bitsPerSample / 8;
+        header_.byteRate = sampleRate * numChannels * bytesPerSample;
+        header_.blockAlign = numChannels * bytesPerSample;
+        header_.dataSize = 0;  // Will be updated as data is written
+        header_.riffSize = 36; // Header size (36) + dataSize (0 initially)
+
+        // Write initial header with placeholder values
+        header_.write(fileStream_);
+        headerWritten_ = true;
+        dataSizePos_ = fileStream_.tellp() - 4; // Position of dataSize field
+
+        return fileStream_.good();
+    }
+
+    /**
+     * Opens an existing WAV file for reading.
+     *
+     * @param filePath The path to the WAV file.
+     * @return True if the file was opened successfully, false otherwise.
+     */
+    bool openForReading(const std::string &filePath)
+    {
+        filePath_ = filePath;
+        fileStream_.open(filePath_, std::ios::binary | std::ios::in);
+        if (!fileStream_.is_open())
+        {
+            return false;
+        }
+
+        header_.read(fileStream_);
+        headerWritten_ = true;
+        return fileStream_.good();
+    }
+
+    /**
+     * Writes audio data to the WAV file.
+     *
+     * @param data Pointer to the audio data to write.
+     * @param size Number of bytes to write.
+     * @return Number of bytes actually written.
+     */
+    size_t writeData(const char *data, size_t size)
+    {
+        if (!fileStream_.is_open() || !headerWritten_)
+        {
             return 0;
-        default:
-            help();
-            return -1;
+        }
+
+        fileStream_.write(data, size);
+        if (fileStream_.good())
+        {
+            header_.dataSize += size;
+            header_.riffSize += size;
+            return size;
+        }
+        return 0;
+    }
+
+    /**
+     * Updates the WAV file header with current sizes.
+     * This should be called periodically to ensure the file is valid
+     * even if recording is interrupted.
+     */
+    void updateHeader()
+    {
+        if (fileStream_.is_open() && headerWritten_)
+        {
+            // Save current position
+            std::streampos currentPos = fileStream_.tellp();
+
+            // Update RIFF chunk size
+            fileStream_.seekp(4, std::ios::beg);
+            fileStream_.write(reinterpret_cast<const char *>(&header_.riffSize), sizeof(header_.riffSize));
+
+            // Update data chunk size
+            fileStream_.seekp(dataSizePos_, std::ios::beg);
+            fileStream_.write(reinterpret_cast<const char *>(&header_.dataSize), sizeof(header_.dataSize));
+
+            // Flush to ensure data is written to disk
+            fileStream_.flush();
+
+            // Return to previous position
+            fileStream_.seekp(currentPos);
         }
     }
 
-    /* get audio file path */
-    if (optind < argc)
+    /**
+     * Reads audio data from the WAV file.
+     *
+     * @param data Pointer to buffer where data will be stored.
+     * @param size Maximum number of bytes to read.
+     * @return Number of bytes actually read.
+     */
+    size_t readData(char *data, size_t size)
     {
-        std::string tmpFile = std::string{argv[optind]};
-        if (mode == MODE_PLAY)
+        if (!fileStream_.is_open() || !headerWritten_)
         {
-            playFilePath = tmpFile;
+            return 0;
+        }
+
+        fileStream_.read(data, size);
+        return fileStream_.gcount();
+    }
+
+    /**
+     * Updates the WAV file header with final sizes and closes the file.
+     */
+    void finalize()
+    {
+        if (fileStream_.is_open() && headerWritten_)
+        {
+            // Update header with final sizes
+            std::streampos currentPos = fileStream_.tellp();
+
+            // Update RIFF chunk size
+            fileStream_.seekp(4, std::ios::beg);
+            fileStream_.write(reinterpret_cast<const char *>(&header_.riffSize), sizeof(header_.riffSize));
+
+            // Update data chunk size
+            fileStream_.seekp(dataSizePos_, std::ios::beg);
+            fileStream_.write(reinterpret_cast<const char *>(&header_.dataSize), sizeof(header_.dataSize));
+
+            fileStream_.seekp(currentPos); // Return to end of file
+            fileStream_.close();
+        }
+    }
+
+    /**
+     * Closes the WAV file without updating the header.
+     */
+    void close()
+    {
+        if (fileStream_.is_open())
+        {
+            fileStream_.close();
+        }
+    }
+
+    /**
+     * Gets the file path.
+     *
+     * @return The file path.
+     */
+    const std::string &getFilePath() const
+    {
+        return filePath_;
+    }
+
+    /**
+     * Gets the WAV header.
+     *
+     * @return The WAV header.
+     */
+    const Header &getHeader() const
+    {
+        return header_;
+    }
+
+    /**
+     * Determines the audio format from the WAV header.
+     *
+     * @return The audio format.
+     */
+    audio_format_t getAudioFormat() const
+    {
+        if ((header_.audioFormat == 1) && (header_.bitsPerSample == 8))
+        {
+            return AUDIO_FORMAT_PCM_8_BIT;
+        }
+        else if ((header_.audioFormat == 1) && (header_.bitsPerSample == 16))
+        {
+            return AUDIO_FORMAT_PCM_16_BIT;
+        }
+        else if ((header_.audioFormat == 1) && (header_.bitsPerSample == 24))
+        {
+            return AUDIO_FORMAT_PCM_24_BIT_PACKED;
+        }
+        else if ((header_.audioFormat == 1) && (header_.bitsPerSample == 32))
+        {
+            return AUDIO_FORMAT_PCM_32_BIT;
+        }
+        else if ((header_.audioFormat == 3) && (header_.bitsPerSample == 32))
+        {
+            return AUDIO_FORMAT_PCM_FLOAT;
         }
         else
         {
-            recordFilePath = tmpFile;
+            return AUDIO_FORMAT_INVALID;
         }
     }
 
-    switch (mode)
+    /**
+     * Gets the sample rate from the header.
+     *
+     * @return The sample rate.
+     */
+    int32_t getSampleRate() const
     {
-    case MODE_RECORD:
-        printf("Running in RECORD mode\n");
-        return recordAudio(inputSource, recordSampleRate, recordChannelCount, recordFormat,
-                           inputFlag, recordMinFrameCount, recordFilePath);
-
-    case MODE_PLAY:
-        printf("Running in PLAY mode\n");
-        return playAudio(usage, contentType, outputFlag, playMinFrameCount, playFilePath);
-
-    case MODE_DUPLEX:
-        printf("Running in DUPLEX mode (record and play simultaneously)\n");
-        return duplexAudio(inputSource, recordSampleRate, recordChannelCount, recordFormat,
-                           inputFlag, usage, contentType, outputFlag,
-                           recordMinFrameCount, recordFilePath);
-
-    default:
-        printf("Error: Invalid mode specified: %d\n", static_cast<int>(mode));
-        help();
-        return -1;
+        return header_.sampleRate;
     }
 
-    return 0;
-}
+    /**
+     * Gets the number of channels from the header.
+     *
+     * @return The number of channels.
+     */
+    int32_t getNumChannels() const
+    {
+        return header_.numChannels;
+    }
+
+    /**
+     * Gets the bits per sample from the header.
+     *
+     * @return The bits per sample.
+     */
+    uint32_t getBitsPerSample() const
+    {
+        return header_.bitsPerSample;
+    }
+};
+
+/* BufferManager class */
+// RAII wrapper for buffer management
+class BufferManager
+{
+private:
+    std::unique_ptr<char[]> buffer;
+    size_t size;
+
+public:
+    BufferManager(size_t bufferSize) : size(bufferSize)
+    {
+        buffer = std::make_unique<char[]>(bufferSize);
+    }
+
+    ~BufferManager() = default;
+
+    char *get() { return buffer.get(); }
+    size_t getSize() const { return size; }
+};
