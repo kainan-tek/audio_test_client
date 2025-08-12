@@ -9,13 +9,32 @@ steps to run:
 
 ## Usage
 ```bash
+Example:
 adb root
 adb remount
+adb push audio_test.wav /data/
 adb push audio_test_client /data/
 adb shell chmod 777 /data/audio_test_client
 adb shell setenforce 0
+adb shell
+cd /data
 
-Options:
+// for recording
+./audio_test_client -m0 -s1 -r48000 -c2 -f1 -F1 -z480
+./audio_test_client -m0 -s1 -r48000 -c2 -f1 -F1 -z480 /data/audio_test.wav
+
+// for playback
+./audio_test_client -m1 -u5 -C0 -O4 -z480 /data/audio_test.wav
+
+// for loopback
+./audio_test_client -m2 -s1 -r48000 -c2 -f1 -F1 -u5 -C0 -O4 -z480
+./audio_test_client -m2 -s1 -r48000 -c2 -f1 -F1 -u5 -C0 -O4 -z480 /data/audio_test.wav
+
+// pull out recorded file
+adb pull /data/audio_test.wav
+
+
+Parameters:
   -m <mode>            : mode (0 for record, 1 for playback, 2 for loopback)
 
   // for recording
@@ -34,20 +53,4 @@ Options:
   -z <min framecount>  : min frame count (e.g., 480, 960, 1920, 3840)
 
   -h                   : help (print this message and exit)
-
-Example:
-// for recording
-adb shell /data/audio_test_client -m0 -s1 -r48000 -c2 -f1 -F1 -z480
-adb shell /data/audio_test_client -m0 -s1 -r48000 -c2 -f1 -F1 -z480 /data/audio_test.wav
-
-// for playback
-adb shell /data/audio_test_client -m1 -u5 -C0 -O4 -z480 /data/audio_test.wav
-
-// for loopback
-adb shell /data/audio_test_client -m2 -s1 -r48000 -c2 -f1 -F1 -u5 -C0 -O4 -z480
-adb shell /data/audio_test_client -m2 -s1 -r48000 -c2 -f1 -F1 -u5 -C0 -O4 -z480 /data/audio_test.wav
-
-// pull the recorded file
-adb pull /data/audio_test.wav
-
 ```

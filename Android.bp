@@ -22,7 +22,7 @@ cc_defaults {
     ],
 }
 
-cc_test {
+cc_binary {
     name: "audio_test_client",
     defaults: ["audio_test_client_defaults"],
     srcs: ["audio_test_client.cpp"],
