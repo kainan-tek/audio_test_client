@@ -27,9 +27,6 @@ using android::content::AttributionSourceState;
 /* max data size */
 #define MAX_DATA_SIZE 1024 * 1024 * 1024 // 1GB
 
-/* Global pointer to WAVFile for signal handling */
-static WAVFile *g_wavFile = nullptr;
-
 /************************** WAV File Management ******************************/
 class WAVFile
 {
@@ -572,6 +569,9 @@ int32_t duplexAudio(
     size_t minFrameCount,
     const std::string &recordFile);
 
+/* Global pointer to WAVFile for signal handling */
+static WAVFile *g_wavFile = nullptr;
+
 /************************** Main function ******************************/
 int32_t main(int32_t argc, char **argv)
 {
@@ -930,7 +930,7 @@ int32_t recordAudio(
         /*************** Report progress **************/
         if (totalBytesRead >= nextProgressReport)
         {
-            printf("Recording progress: recorded %d seconds, %d MB\n", totalBytesRead / bytesPerSecond, totalBytesRead / (1024 * 1024));
+            printf("Recording ... , recorded %d seconds, %d MB\n", totalBytesRead / bytesPerSecond, totalBytesRead / (1024 * 1024));
             nextProgressReport += bytesPerSecond * kProgressReportInterval;
         }
 
@@ -1164,7 +1164,7 @@ int32_t playAudio(
         /*************** Update progress report **************/
         if (totalBytesPlayed >= nextProgressReport)
         {
-            printf("Playing progress: played %d seconds, %d MB\n", totalBytesPlayed / bytesPerSecond, totalBytesPlayed / (1024 * 1024));
+            printf("Playing ... , played %d seconds, %d MB\n", totalBytesPlayed / bytesPerSecond, totalBytesPlayed / (1024 * 1024));
             nextProgressReport += bytesPerSecond * kProgressReportInterval;
         }
     }
@@ -1458,7 +1458,7 @@ int32_t duplexAudio(
         /*************** Report progress **************/
         if (totalBytesRead >= nextProgressReport)
         {
-            printf("Recording progress: recorded %d seconds, %d MB\n", totalBytesRead / bytesPerSecond, totalBytesRead / (1024 * 1024));
+            printf("Recording ... , recorded %d seconds, %d MB\n", totalBytesRead / bytesPerSecond, totalBytesRead / (1024 * 1024));
             nextProgressReport += bytesPerSecond * kProgressReportInterval;
         }
 
