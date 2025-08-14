@@ -923,7 +923,7 @@ int32_t recordAudio(
     uint32_t totalBytesRead = 0; // total bytes read from AudioRecord
     size_t bufferSize = frameCount * channelCount * bytesPerSample;
     uint32_t bytesPerSecond = sampleRate * channelCount * bytesPerSample;
-    const uint32_t kRetryDelayUs = 1000;         // 1ms delay for retry
+    const uint32_t kRetryDelayUs = 2000;         // 2ms delay for retry
     const uint32_t kMaxRetries = 3;              // max retries
     const uint32_t kProgressReportInterval = 10; // report progress every 10 seconds
     const uint32_t kHeaderUpdateInterval = 2;    // update header every 2 seconds
@@ -1186,7 +1186,7 @@ int32_t playAudio(
     uint32_t totalBytesPlayed = 0; // Total bytes played by AudioTrack
     size_t bufferSize = frameCount * channelCount * bytesPerSample;
     uint32_t bytesPerSecond = sampleRate * channelCount * bytesPerSample;
-    const uint32_t kRetryDelayUs = 1000;         // 1ms retry delay
+    const uint32_t kRetryDelayUs = 2000;         // 2ms retry delay
     const uint32_t kMaxRetries = 3;              // max retries
     const uint32_t kProgressReportInterval = 10; // report progress every 10 seconds
 
@@ -1216,7 +1216,7 @@ int32_t playAudio(
             {
                 printf("Warning: AudioTrack write failed with error %zd, retry %u/%u\n", written, retryCount + 1, kMaxRetries);
                 retryCount++;
-                usleep(kRetryDelayUs); // 1ms delay before retry
+                usleep(kRetryDelayUs); // wait before retry
                 continue;
             }
             bytesWritten += written;
@@ -1459,7 +1459,7 @@ int32_t duplexAudio(
     uint32_t totalBytesRead = 0; // Total number of bytes read from AudioRecord
     size_t bufferSize = recordFrameCount * channelCount * bytesPerSample;
     uint32_t bytesPerSecond = sampleRate * channelCount * bytesPerSample;
-    const uint32_t kRetryDelayUs = 1000;         // 1ms retry delay
+    const uint32_t kRetryDelayUs = 2000;         // 2ms retry delay
     const uint32_t kMaxRetries = 3;              // max retries
     const uint32_t kProgressReportInterval = 10; // report progress every 10 seconds
     const uint32_t kHeaderUpdateInterval = 2;    // update header every 2 seconds
