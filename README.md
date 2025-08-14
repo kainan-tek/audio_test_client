@@ -20,15 +20,15 @@ adb shell
 cd /data
 
 // for recording
-./audio_test_client -m0 -s1 -r48000 -c2 -f1 -F1 -z480
-./audio_test_client -m0 -s1 -r48000 -c2 -f1 -F1 -z480 /data/audio_test.wav
+./audio_test_client -m0 -s1 -r48000 -c2 -f1 -F1 -z480 -d30
+./audio_test_client -m0 -s1 -r48000 -c2 -f1 -F1 -z480 -d30 /data/audio_test.wav
 
 // for playback
 ./audio_test_client -m1 -u5 -C0 -O4 -z480 /data/audio_test.wav
 
 // for loopback
-./audio_test_client -m2 -s1 -r48000 -c2 -f1 -F1 -u5 -C0 -O4 -z480
-./audio_test_client -m2 -s1 -r48000 -c2 -f1 -F1 -u5 -C0 -O4 -z480 /data/audio_test.wav
+./audio_test_client -m2 -s1 -r48000 -c2 -f1 -F1 -u5 -C0 -O4 -z480 -d30
+./audio_test_client -m2 -s1 -r48000 -c2 -f1 -F1 -u5 -C0 -O4 -z480 -d30 /data/audio_test.wav
 
 // pull out recorded file
 adb pull /data/audio_test.wav
@@ -43,6 +43,7 @@ Parameters:
   -c <channels>        : number of channels (1 for mono, 2 for stereo ...)
   -f <format>          : audio format (1 for PCM 16-bit, 3 for PCM 32-bit ...)
   -F <input flag>      : input flag (0 for normal, 1 for fast ...)
+  -d <duration>        : duration in seconds (0 for infinite)
 
   // for playback
   -u <usage>           : usage (0 for normal, 1 for media ...)

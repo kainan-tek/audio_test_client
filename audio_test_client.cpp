@@ -13,19 +13,23 @@
 #include <time.h>
 #include <vector>
 #include <memory>
+#include <limits>
 #include <signal.h>
 #include <utils/Log.h>
 #include <media/AudioRecord.h>
 #include <media/AudioTrack.h>
 #include <media/AudioSystem.h>
 #include <android/content/AttributionSourceState.h>
-// #include <binder/Binder.h>
+#include <binder/Binder.h>
+
+#define LOG_TAG "audio_test_client"
 
 using namespace android;
 using android::content::AttributionSourceState;
 
-/* max data size */
-#define MAX_DATA_SIZE 1024 * 1024 * 1024 // 1GB
+/* max data size for reading */
+// Cap recorded/playback data tracked by counters to 2 GiB to avoid 32-bit overflow
+static constexpr uint32_t MAX_DATA_SIZE = 2u * 1024u * 1024u * 1024u; // 2 GiB
 
 /************************** WAV File Management ******************************/
 class WAVFile
@@ -124,6 +128,7 @@ public:
     {
         // Initialize header with default values
         memset(&header_, 0, sizeof(Header));
+        static_assert(sizeof(Header) == 44, "WAV header size must be 44 bytes");
     }
 
     /**
@@ -138,7 +143,8 @@ public:
     bool createForWriting(const std::string &filePath, uint32_t sampleRate, uint32_t numChannels, uint32_t bitsPerSample)
     {
         filePath_ = filePath;
-        fileStream_.open(filePath_, std::ios::binary | std::ios::out | std::ios::in | std::ios::trunc);
+        // Open for binary output and create/truncate the file. Using ios::in here can fail on some libstdc++ when the file doesn't exist.
+        fileStream_.open(filePath_, std::ios::binary | std::ios::out | std::ios::trunc);
         if (!fileStream_.is_open())
         {
             return false;
@@ -186,6 +192,18 @@ public:
         }
 
         header_.read(fileStream_);
+        // Basic WAV header validation
+        if (strncmp(header_.riffID, "RIFF", 4) != 0 || strncmp(header_.waveID, "WAVE", 4) != 0 ||
+            strncmp(header_.fmtID, "fmt ", 4) != 0 || strncmp(header_.dataID, "data", 4) != 0)
+        {
+            return false;
+        }
+        if (header_.fmtSize < 16 || (header_.audioFormat != 1 && header_.audioFormat != 3) ||
+            header_.numChannels == 0 || header_.sampleRate == 0)
+        {
+            return false;
+        }
+
         headerWritten_ = true;
         return fileStream_.good();
     }
@@ -204,11 +222,18 @@ public:
             return 0;
         }
 
+        // Prevent 32-bit overflow of WAV header sizes
+        if (size > 0 && (header_.dataSize > UINT32_MAX - size))
+        {
+            return 0;
+        }
+
         fileStream_.write(data, size);
         if (fileStream_.good())
         {
-            header_.dataSize += size;
-            header_.riffSize += size;
+            // Update header sizes
+            header_.dataSize = header_.dataSize + static_cast<uint32_t>(size);
+            header_.riffSize = header_.riffSize + static_cast<uint32_t>(size);
             return size;
         }
         return 0;
@@ -278,6 +303,7 @@ public:
             fileStream_.seekp(dataSizePos_, std::ios::beg);
             fileStream_.write(reinterpret_cast<const char *>(&header_.dataSize), sizeof(header_.dataSize));
 
+            fileStream_.flush();
             fileStream_.seekp(currentPos); // Return to end of file
             fileStream_.close();
         }
@@ -423,7 +449,8 @@ static void help()
     printf("  -c{channelCount}    Set channel count\n");
     printf("  -f{format}          Set audio format\n");
     printf("  -F{inputFlag}       Set audio input flag\n");
-    printf("  -z{minFrameCount}   Set min frame count\n\n");
+    printf("  -z{minFrameCount}   Set min frame count\n");
+    printf("  -d{duration}        Set recording duration(s) (0 = unlimited)\n\n");
 
     printf("Play Options:\n");
     printf("  -u{usage}           Set audio usage\n");
@@ -481,8 +508,11 @@ static void help()
     printf("    4096 = AUDIO_INPUT_FLAG_HW_HOTWORD_CONTINUOUS\n");
     printf("    8192 = AUDIO_INPUT_FLAG_BUILTIN_FAR_FIELD_MIC\n\n");
 
-    printf("Audio min frameCount Options(-z{minFrameCount}):\n");
+    printf("AudioRecord/AudioTrack min frameCount Options(-z{minFrameCount}):\n");
     printf("    480, 960, 1920\n\n");
+
+    printf("AudioRecord Duration Options(-d{duration}):\n");
+    printf("    0 = unlimited, otherwise in seconds\n\n");
 
     printf("AudioTrack Usage Options(-u{usage}):\n");
     printf("    0 = AUDIO_USAGE_UNKNOWN\n");
@@ -536,9 +566,9 @@ static void help()
     printf("    65536 = AUDIO_OUTPUT_FLAG_LOW_LATENCY_VOIP\n\n");
 
     printf("Examples:\n");
-    printf("    Record: audio_test_client -m0 -s1 -r48000 -c2 -f1 -F1 -z480\n");
+    printf("    Record: audio_test_client -m0 -s1 -r48000 -c2 -f1 -F1 -z480 -d10\n");
     printf("    Play:   audio_test_client -m1 -u5 -C0 -O4 -z480 /data/audio_test.wav\n");
-    printf("    Duplex: audio_test_client -m2 -s1 -r48000 -c2 -f1 -F1 -u5 -C0 -O4 -z480\n");
+    printf("    Duplex: audio_test_client -m2 -s1 -r48000 -c2 -f1 -F1 -u5 -C0 -O4 -z480 -d30\n");
 }
 
 int32_t recordAudio(
@@ -548,6 +578,7 @@ int32_t recordAudio(
     audio_format_t format,
     audio_input_flags_t inputFlag,
     size_t minFrameCount,
+    int32_t durationSeconds,
     const std::string &recordFile);
 
 int32_t playAudio(
@@ -567,10 +598,12 @@ int32_t duplexAudio(
     audio_content_type_t contentType,
     audio_output_flags_t outputFlag,
     size_t minFrameCount,
+    int32_t durationSeconds,
     const std::string &recordFile);
 
-/* Global pointer to WAVFile for signal handling */
-static WAVFile *g_wavFile = nullptr;
+/* Global stop flag for signal handling (async-signal-safe) */
+static volatile sig_atomic_t g_stopRequested = 0;
+static audio_format_t parse_format_option(int v);
 
 /************************** Main function ******************************/
 int32_t main(int32_t argc, char **argv)
@@ -579,12 +612,13 @@ int32_t main(int32_t argc, char **argv)
     AudioMode mode = MODE_INVALID; // default mode is invalid
 
     // Record parameters
-    audio_source_t inputSource = AUDIO_SOURCE_HOTWORD;     // default audio source
+    audio_source_t inputSource = AUDIO_SOURCE_MIC;         // default audio source
     int32_t recordSampleRate = 48000;                      // default sample rate
     int32_t recordChannelCount = 1;                        // default channel count
     audio_format_t recordFormat = AUDIO_FORMAT_PCM_16_BIT; // default format
     audio_input_flags_t inputFlag = AUDIO_INPUT_FLAG_NONE; // default input flag
     size_t recordMinFrameCount = 0;                        // will be calculated
+    int32_t durationSeconds = 0;                           // recording duration in seconds, 0 = unlimited
     // 根据传入参数和当前时间自动生成带时间戳的录音文件，如果在命令行参数后指定录音文件，则不会自动生成。
     // 不可在此指定录音文件，要么在命令行参数后指定，要么不指定，自动生成带时间戳的录音文件。
     std::string recordFilePath = "";
@@ -599,7 +633,7 @@ int32_t main(int32_t argc, char **argv)
 
     /************** parse input params **************/
     int32_t opt = 0;
-    while ((opt = getopt(argc, argv, "m:s:r:c:f:F:u:C:O:z:h")) != -1)
+    while ((opt = getopt(argc, argv, "m:s:r:c:f:F:u:C:O:z:d:h")) != -1)
     {
         switch (opt)
         {
@@ -615,11 +649,17 @@ int32_t main(int32_t argc, char **argv)
         case 'c': // channel count
             recordChannelCount = atoi(optarg);
             break;
-        case 'f': // format
-            recordFormat = static_cast<audio_format_t>(atoi(optarg));
+        case 'f': // format (map friendly numbers to audio_format_t)
+        {
+            int32_t f = atoi(optarg);
+            recordFormat = parse_format_option(f);
             break;
+        }
         case 'F': // input flag
             inputFlag = static_cast<audio_input_flags_t>(atoi(optarg));
+            break;
+        case 'd': // recording duration in seconds
+            durationSeconds = atoi(optarg);
             break;
         case 'u': // audio usage
             usage = static_cast<audio_usage_t>(atoi(optarg));
@@ -662,7 +702,7 @@ int32_t main(int32_t argc, char **argv)
     case MODE_RECORD:
         printf("Running in RECORD mode\n");
         return recordAudio(inputSource, recordSampleRate, recordChannelCount, recordFormat,
-                           inputFlag, recordMinFrameCount, recordFilePath);
+                           inputFlag, recordMinFrameCount, durationSeconds, recordFilePath);
 
     case MODE_PLAY:
         printf("Running in PLAY mode\n");
@@ -671,8 +711,8 @@ int32_t main(int32_t argc, char **argv)
     case MODE_DUPLEX:
         printf("Running in DUPLEX mode (record and play simultaneously)\n");
         return duplexAudio(inputSource, recordSampleRate, recordChannelCount, recordFormat,
-                           inputFlag, usage, contentType, outputFlag,
-                           recordMinFrameCount, recordFilePath);
+                           inputFlag, usage, contentType, outputFlag, recordMinFrameCount,
+                           durationSeconds, recordFilePath);
 
     default:
         printf("Error: Invalid mode specified: %d\n", static_cast<int>(mode));
@@ -688,14 +728,8 @@ void signalHandler(int signal)
 {
     if (signal == SIGINT)
     {
-        printf("\nReceived SIGINT (Ctrl+C), finalizing recording...\n");
-        if (g_wavFile != nullptr)
-        {
-            // g_wavFile->updateHeader(); // Update header before exit
-            g_wavFile->finalize(); // Finalize the WAV file
-            g_wavFile = nullptr;   // Clear the pointer
-        }
-        exit(0);
+        // Set a flag and let the main loop finalize resources safely.
+        g_stopRequested = 1;
     }
 }
 
@@ -726,6 +760,28 @@ static std::string makeRecordFilePath(int32_t sampleRate,
     return std::string(audioFile);
 }
 
+// Map -f option values (as shown in help) to audio_format_t
+static audio_format_t parse_format_option(int v)
+{
+    switch (v)
+    {
+    case 1:
+        return AUDIO_FORMAT_PCM_16_BIT;
+    case 2:
+        return AUDIO_FORMAT_PCM_8_BIT;
+    case 3:
+        return AUDIO_FORMAT_PCM_32_BIT;
+    case 4:
+        return AUDIO_FORMAT_PCM_8_24_BIT;
+    case 5:
+        return AUDIO_FORMAT_PCM_FLOAT;
+    case 6:
+        return AUDIO_FORMAT_PCM_24_BIT_PACKED;
+    default:
+        return AUDIO_FORMAT_PCM_16_BIT; // Default to PCM 16-bit
+    }
+}
+
 /************************** Audio Record Function ******************************/
 /**
  * @brief Record audio from the specified input source and save it to a WAV file.
@@ -744,6 +800,7 @@ int32_t recordAudio(
     audio_format_t format,
     audio_input_flags_t inputFlag,
     size_t minFrameCount,
+    int32_t durationSeconds,
     const std::string &recordFile)
 {
     /************** set audio parameters **************/
@@ -805,7 +862,7 @@ int32_t recordAudio(
     printf("AudioRecord init\n");
     sp<AudioRecord> audioRecord = new AudioRecord(attributionSource);
     if (audioRecord->set(
-            AUDIO_SOURCE_DEFAULT,       // source
+            inputSource,                // source (use requested input source)
             sampleRate,                 // sampleRate
             format,                     // format
             channelMask,                // channelMask
@@ -836,7 +893,7 @@ int32_t recordAudio(
 
     /************** set audio file path **************/
     std::string audioFilePath = makeRecordFilePath(sampleRate, channelCount,
-                                                   static_cast<uint32_t>(bytesPerSample * 8),
+                                                   bytesPerSample * 8,
                                                    recordFile);
     printf("Recording audio to file: %s\n", audioFilePath.c_str());
 
@@ -847,9 +904,6 @@ int32_t recordAudio(
         printf("Error: can't create output file %s\n", audioFilePath.c_str());
         return -1;
     }
-
-    /************** set global WAV file pointer **************/
-    g_wavFile = &wavFile;
 
     /************** Register signal handler for SIGINT (Ctrl+C) **************/
     signal(SIGINT, signalHandler);
@@ -865,34 +919,44 @@ int32_t recordAudio(
     }
 
     /************ AudioRecord loop **************/
-    int32_t bytesRead = 0;      // bytes read from AudioRecord
-    int32_t totalBytesRead = 0; // total bytes read from AudioRecord
+    ssize_t bytesRead = 0;       // bytes read from AudioRecord (can be negative on error)
+    uint32_t totalBytesRead = 0; // total bytes read from AudioRecord
     size_t bufferSize = frameCount * channelCount * bytesPerSample;
-    int32_t bytesPerSecond = sampleRate * channelCount * bytesPerSample;
-    const int32_t kRetryDelayUs = 1000;         // 1ms delay for retry
-    const int32_t kMaxRetries = 3;              // max retries
-    const int32_t kProgressReportInterval = 10; // report progress every 10 seconds
-    const int32_t kHeaderUpdateInterval = 2;    // update header every 2 seconds
+    uint32_t bytesPerSecond = sampleRate * channelCount * bytesPerSample;
+    const uint32_t kRetryDelayUs = 1000;         // 1ms delay for retry
+    const uint32_t kMaxRetries = 3;              // max retries
+    const uint32_t kProgressReportInterval = 10; // report progress every 10 seconds
+    const uint32_t kHeaderUpdateInterval = 2;    // update header every 2 seconds
 
     /*************** BufferManager for audio data **************/
     BufferManager bufferManager(bufferSize);
     char *buffer = bufferManager.get();
 
-    printf("Recording started. Press Ctrl+C to stop.\n");
+    if (durationSeconds > 0)
+        printf("Recording started. Recording for %d seconds...\n", durationSeconds);
+    else
+        printf("Recording started. Press Ctrl+C to stop.\n");
 
-    int32_t retryCount = 0;
-    int32_t nextProgressReport = bytesPerSecond * kProgressReportInterval;
-    int32_t nextHeaderUpdate = bytesPerSecond * kHeaderUpdateInterval;
+    uint32_t retryCount = 0;
+    uint32_t nextProgressReport = bytesPerSecond * kProgressReportInterval;
+    uint32_t nextHeaderUpdate = bytesPerSecond * kHeaderUpdateInterval;
+    uint32_t maxBytesToRecord = (durationSeconds > 0) ? durationSeconds * bytesPerSecond : std::numeric_limits<uint32_t>::max();
     while (true)
     {
+        if (g_stopRequested)
+        {
+            printf("Stop requested. Finalizing...\n");
+            break;
+        }
+
         bytesRead = audioRecord->read(buffer, bufferSize);
         if (bytesRead < 0)
         {
-            printf("Warning: AudioRecord read returned error %d, retry %d/%d\n", bytesRead, retryCount + 1, kMaxRetries);
+            printf("Warning: AudioRecord read returned error %zd, retry %u/%u\n", bytesRead, retryCount + 1, kMaxRetries);
             retryCount++;
             if (retryCount >= kMaxRetries)
             {
-                printf("Error: AudioRecord read failed after %d retries\n", kMaxRetries);
+                printf("Error: AudioRecord read failed after %u retries\n", kMaxRetries);
                 break; // Error occurred
             }
             usleep(kRetryDelayUs);
@@ -910,10 +974,10 @@ int32_t recordAudio(
         retryCount = 0;
 
         /*************** Update total bytes read **************/
-        totalBytesRead += bytesRead;
+        totalBytesRead += static_cast<uint32_t>(bytesRead);
 
         /*************** Write data to WAV file **************/
-        size_t bytesWritten = wavFile.writeData(buffer, bytesRead);
+        size_t bytesWritten = wavFile.writeData(buffer, static_cast<size_t>(bytesRead));
         if (bytesWritten != static_cast<size_t>(bytesRead))
         {
             printf("Error: Failed to write to output file\n");
@@ -930,20 +994,27 @@ int32_t recordAudio(
         /*************** Report progress **************/
         if (totalBytesRead >= nextProgressReport)
         {
-            printf("Recording ... , recorded %d seconds, %d MB\n", totalBytesRead / bytesPerSecond, totalBytesRead / (1024 * 1024));
+            printf("Recording ... , recorded %u seconds, %u MB\n", totalBytesRead / bytesPerSecond, totalBytesRead / (1024u * 1024u));
             nextProgressReport += bytesPerSecond * kProgressReportInterval;
         }
 
         /*************** Check max data size **************/
         if (totalBytesRead >= MAX_DATA_SIZE)
         {
-            printf("Warning: AudioRecord data size exceeds limit: %d MB\n", MAX_DATA_SIZE / (1024 * 1024));
+            printf("Warning: AudioRecord data size exceeds limit: %u MB\n", MAX_DATA_SIZE / (1024u * 1024u));
+            break;
+        }
+
+        /*************** Check recording duration **************/
+        if (durationSeconds > 0 && totalBytesRead >= maxBytesToRecord)
+        {
+            printf("Recording duration of %d seconds reached.\n", durationSeconds);
             break;
         }
     }
 
     /************** AudioRecord stop **************/
-    printf("AudioRecord stop, total bytes recorded: %d\n", totalBytesRead);
+    printf("AudioRecord stop, total bytes recorded: %u\n", totalBytesRead);
     audioRecord->stop();
 
     /*************** Finalize WAV file **************/
@@ -1110,14 +1181,14 @@ int32_t playAudio(
     }
 
     /************** Audio playback loop **************/
-    int32_t bytesRead = 0;        // Number of bytes read from file
-    int32_t bytesWritten = 0;     // Number of bytes written to AudioTrack
-    int32_t totalBytesPlayed = 0; // Total bytes played by AudioTrack
+    size_t bytesRead = 0;          // Number of bytes read from file (WAVFile::readData returns size_t)
+    ssize_t bytesWritten = 0;      // Number of bytes written to AudioTrack (can be negative on error)
+    uint32_t totalBytesPlayed = 0; // Total bytes played by AudioTrack
     size_t bufferSize = frameCount * channelCount * bytesPerSample;
-    int32_t bytesPerSecond = sampleRate * channelCount * bytesPerSample;
-    const int32_t kRetryDelayUs = 1000;         // 1ms retry delay
-    const int32_t kMaxRetries = 3;              // max retries
-    const int32_t kProgressReportInterval = 10; // report progress every 10 seconds
+    uint32_t bytesPerSecond = sampleRate * channelCount * bytesPerSample;
+    const uint32_t kRetryDelayUs = 1000;         // 1ms retry delay
+    const uint32_t kMaxRetries = 3;              // max retries
+    const uint32_t kProgressReportInterval = 10; // report progress every 10 seconds
 
     /*************** BufferManager for audio data **************/
     BufferManager bufferManager(bufferSize);
@@ -1125,12 +1196,12 @@ int32_t playAudio(
 
     printf("Playback started. Playing audio from: %s\n", playFile.c_str());
 
-    int32_t retryCount = 0;
-    int32_t nextProgressReport = bytesPerSecond * kProgressReportInterval;
+    uint32_t retryCount = 0;
+    uint32_t nextProgressReport = bytesPerSecond * kProgressReportInterval;
     while (true)
     {
         bytesRead = wavFile.readData(buffer, bufferSize);
-        if (bytesRead <= 0)
+        if (bytesRead == 0)
         {
             printf("End of file reached or read error\n");
             break;
@@ -1138,12 +1209,12 @@ int32_t playAudio(
 
         bytesWritten = 0;
         retryCount = 0; // Reset retry count for each new buffer write
-        while (bytesWritten < bytesRead && retryCount < kMaxRetries)
+        while ((size_t)bytesWritten < bytesRead && retryCount < kMaxRetries)
         {
-            int32_t written = audioTrack->write(buffer + bytesWritten, bytesRead - bytesWritten);
+            ssize_t written = audioTrack->write(buffer + bytesWritten, bytesRead - (size_t)bytesWritten);
             if (written < 0)
             {
-                printf("Warning: AudioTrack write failed with error %d, retry %d/%d\n", written, retryCount + 1, kMaxRetries);
+                printf("Warning: AudioTrack write failed with error %zd, retry %u/%u\n", written, retryCount + 1, kMaxRetries);
                 retryCount++;
                 usleep(kRetryDelayUs); // 1ms delay before retry
                 continue;
@@ -1154,23 +1225,23 @@ int32_t playAudio(
 
         if (retryCount >= kMaxRetries)
         {
-            printf("Error: AudioTrack write failed after %d retries\n", kMaxRetries);
+            printf("Error: AudioTrack write failed after %u retries\n", kMaxRetries);
             break;
         }
 
         /*************** Update total bytes played **************/
-        totalBytesPlayed += bytesRead;
+        totalBytesPlayed += static_cast<uint32_t>(bytesRead);
 
         /*************** Update progress report **************/
         if (totalBytesPlayed >= nextProgressReport)
         {
-            printf("Playing ... , played %d seconds, %d MB\n", totalBytesPlayed / bytesPerSecond, totalBytesPlayed / (1024 * 1024));
+            printf("Playing ... , played %u seconds, %u MB\n", totalBytesPlayed / bytesPerSecond, totalBytesPlayed / (1024u * 1024u));
             nextProgressReport += bytesPerSecond * kProgressReportInterval;
         }
     }
 
     /*************** AudioTrack stop **************/
-    printf("AudioTrack stop, total bytes played: %d\n", totalBytesPlayed);
+    printf("AudioTrack stop, total bytes played: %u\n", totalBytesPlayed);
     audioTrack->stop();
 
     /*************** Close WAV file **************/
@@ -1205,6 +1276,7 @@ int32_t duplexAudio(
     audio_content_type_t contentType,
     audio_output_flags_t outputFlag,
     size_t minFrameCount,
+    int32_t durationSeconds,
     const std::string &recordFile)
 {
     /************** set audio parameters **************/
@@ -1268,7 +1340,7 @@ int32_t duplexAudio(
     printf("AudioRecord init\n");
     sp<AudioRecord> audioRecord = new AudioRecord(attributionSource);
     if (audioRecord->set(
-            AUDIO_SOURCE_DEFAULT,       // source
+            inputSource,                // source (use requested input source)
             sampleRate,                 // sampleRate
             format,                     // format
             channelMaskIn,              // channelMask
@@ -1346,7 +1418,7 @@ int32_t duplexAudio(
 
     /************** set audio file path **************/
     std::string audioFilePath = makeRecordFilePath(sampleRate, channelCount,
-                                                   static_cast<uint32_t>(bytesPerSample * 8),
+                                                   bytesPerSample * 8,
                                                    recordFile);
     printf("Recording audio to file: %s\n", audioFilePath.c_str());
 
@@ -1357,9 +1429,6 @@ int32_t duplexAudio(
         printf("Error: can't create output file %s\n", audioFilePath.c_str());
         return -1;
     }
-
-    /************** set global pointer to WAVFile **************/
-    g_wavFile = &wavFile;
 
     /************** Register signal handler for SIGINT (Ctrl+C) **************/
     signal(SIGINT, signalHandler);
@@ -1385,39 +1454,51 @@ int32_t duplexAudio(
     }
 
     /************** duplex audio loop **************/
-    int32_t bytesRead = 0;      // Number of bytes read from AudioRecord
-    int32_t bytesWritten = 0;   // Number of bytes written to AudioTrack
-    int32_t totalBytesRead = 0; // Total number of bytes read from AudioRecord
+    ssize_t bytesRead = 0;       // Number of bytes read from AudioRecord (can be negative on error)
+    ssize_t bytesWritten = 0;    // Number of bytes written to AudioTrack (can be negative on error)
+    uint32_t totalBytesRead = 0; // Total number of bytes read from AudioRecord
     size_t bufferSize = recordFrameCount * channelCount * bytesPerSample;
-    int32_t bytesPerSecond = sampleRate * channelCount * bytesPerSample;
-    const int32_t kRetryDelayUs = 1000;         // 1ms retry delay
-    const int32_t kMaxRetries = 3;              // max retries
-    const int32_t kProgressReportInterval = 10; // report progress every 10 seconds
-    const int32_t kHeaderUpdateInterval = 2;    // update header every 2 seconds
+    uint32_t bytesPerSecond = sampleRate * channelCount * bytesPerSample;
+    const uint32_t kRetryDelayUs = 1000;         // 1ms retry delay
+    const uint32_t kMaxRetries = 3;              // max retries
+    const uint32_t kProgressReportInterval = 10; // report progress every 10 seconds
+    const uint32_t kHeaderUpdateInterval = 2;    // update header every 2 seconds
 
     /*************** BufferManager for audio data **************/
     BufferManager recordBufferManager(bufferSize);
     char *recordBuffer = recordBufferManager.get();
 
-    printf("Duplex audio started. Press Ctrl+C to stop.\n");
+    if (durationSeconds > 0)
+        printf("Duplex audio started. Recording for %d seconds...\n", durationSeconds);
+    else
+        printf("Duplex audio started. Press Ctrl+C to stop.\n");
 
-    int32_t recordRetryCount = 0;
-    int32_t playRetryCount = 0;
-    int32_t nextProgressReport = bytesPerSecond * kProgressReportInterval;
-    int32_t nextHeaderUpdate = bytesPerSecond * kHeaderUpdateInterval;
+    uint32_t recordRetryCount = 0;
+    uint32_t playRetryCount = 0;
+    uint32_t nextProgressReport = bytesPerSecond * kProgressReportInterval;
+    uint32_t nextHeaderUpdate = bytesPerSecond * kHeaderUpdateInterval;
+    uint32_t maxBytesToRecord = (durationSeconds > 0) ? durationSeconds * bytesPerSecond : std::numeric_limits<uint32_t>::max();
     bool recording = true;
     bool playing = true;
     while (recording && playing)
     {
+        if (g_stopRequested)
+        {
+            printf("Stop requested. Finalizing...\n");
+            recording = false;
+            playing = false;
+            break;
+        }
+
         /************** Read from AudioRecord **************/
         bytesRead = audioRecord->read(recordBuffer, bufferSize);
         if (bytesRead < 0)
         {
-            printf("Warning: AudioRecord read returned error %d, retry %d/%d\n", bytesRead, recordRetryCount + 1, kMaxRetries);
+            printf("Warning: AudioRecord read returned error %zd, retry %u/%u\n", bytesRead, recordRetryCount + 1, kMaxRetries);
             recordRetryCount++;
             if (recordRetryCount >= kMaxRetries)
             {
-                printf("Error: AudioRecord read failed after %d retries\n", kMaxRetries);
+                printf("Error: AudioRecord read failed after %u retries\n", kMaxRetries);
                 recording = false;
                 break;
             }
@@ -1436,10 +1517,10 @@ int32_t duplexAudio(
         recordRetryCount = 0;
 
         /*************** Update total bytes read **************/
-        totalBytesRead += bytesRead;
+        totalBytesRead += static_cast<uint32_t>(bytesRead);
 
         /*************** Write to WAV file **************/
-        size_t bytesWrittenToFile = wavFile.writeData(recordBuffer, bytesRead);
+        size_t bytesWrittenToFile = wavFile.writeData(recordBuffer, static_cast<size_t>(bytesRead));
         if (bytesWrittenToFile != static_cast<size_t>(bytesRead))
         {
             printf("Error: Failed to write to output file\n");
@@ -1458,30 +1539,37 @@ int32_t duplexAudio(
         /*************** Report progress **************/
         if (totalBytesRead >= nextProgressReport)
         {
-            printf("Recording ... , recorded %d seconds, %d MB\n", totalBytesRead / bytesPerSecond, totalBytesRead / (1024 * 1024));
+            printf("Recording ... , recorded %u seconds, %u MB\n", totalBytesRead / bytesPerSecond, totalBytesRead / (1024u * 1024u));
             nextProgressReport += bytesPerSecond * kProgressReportInterval;
         }
 
         /*************** Check data size limit **************/
         if (totalBytesRead >= MAX_DATA_SIZE)
         {
-            printf("Warning: AudioRecord data size exceeds limit: %d MB\n", MAX_DATA_SIZE / (1024 * 1024));
+            printf("Warning: AudioRecord data size exceeds limit: %u MB\n", MAX_DATA_SIZE / (1024u * 1024u));
+            recording = false;
+        }
+
+        /*************** Check recording duration **************/
+        if (durationSeconds > 0 && totalBytesRead >= maxBytesToRecord)
+        {
+            printf("Recording duration of %d seconds reached.\n", durationSeconds);
             recording = false;
         }
 
         /*************** Write to AudioTrack **************/
         bytesWritten = 0;
         playRetryCount = 0;
-        while (bytesWritten < bytesRead && playing)
+        while ((size_t)bytesWritten < (size_t)bytesRead && playing)
         {
-            int32_t written = audioTrack->write(recordBuffer + bytesWritten, bytesRead - bytesWritten);
+            ssize_t written = audioTrack->write(recordBuffer + bytesWritten, (size_t)bytesRead - (size_t)bytesWritten);
             if (written < 0)
             {
-                printf("Warning: AudioTrack write failed with error %d, retry %d/%d\n", written, playRetryCount + 1, kMaxRetries);
+                printf("Warning: AudioTrack write failed with error %zd, retry %u/%u\n", written, playRetryCount + 1, kMaxRetries);
                 playRetryCount++;
                 if (playRetryCount >= kMaxRetries)
                 {
-                    printf("Error: AudioTrack write failed after %d retries\n", kMaxRetries);
+                    printf("Error: AudioTrack write failed after %u retries\n", kMaxRetries);
                     playing = false;
                     break;
                 }
@@ -1502,7 +1590,7 @@ int32_t duplexAudio(
 
     /************** finalize WAV file **************/
     wavFile.finalize();
-    printf("Total bytes read: %d\n", totalBytesRead);
+    printf("Total bytes read: %u\n", totalBytesRead);
     printf("Duplex audio completed. Recording saved to: %s\n", audioFilePath.c_str());
 
     return 0;
