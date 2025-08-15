@@ -15,6 +15,7 @@
 #include <memory>
 #include <limits>
 #include <signal.h>
+#include <stdexcept>
 #include <utils/Log.h>
 #include <media/AudioRecord.h>
 #include <media/AudioTrack.h>
@@ -28,7 +29,6 @@ using namespace android;
 using android::content::AttributionSourceState;
 
 /* max data size for reading */
-// Cap recorded/playback data tracked by counters to 2 GiB to avoid 32-bit overflow
 static constexpr uint32_t MAX_DATA_SIZE = 2u * 1024u * 1024u * 1024u; // 2 GiB
 
 /************************** WAV File Management ******************************/
@@ -131,6 +131,14 @@ public:
         static_assert(sizeof(Header) == 44, "WAV header size must be 44 bytes");
     }
 
+    ~WAVFile()
+    {
+        if (fileStream_.is_open())
+        {
+            fileStream_.close();
+        }
+    }
+
     /**
      * Creates a new WAV file for writing with the specified parameters.
      *
@@ -150,11 +158,11 @@ public:
             return false;
         }
 
-        // Initialize header
-        strncpy(header_.riffID, "RIFF", 4);
-        strncpy(header_.waveID, "WAVE", 4);
-        strncpy(header_.fmtID, "fmt ", 4);
-        strncpy(header_.dataID, "data", 4);
+        // Initialize header - use memcpy for fixed-size arrays to ensure no null termination issues
+        memcpy(header_.riffID, "RIFF", 4);
+        memcpy(header_.waveID, "WAVE", 4);
+        memcpy(header_.fmtID, "fmt ", 4);
+        memcpy(header_.dataID, "data", 4);
 
         header_.fmtSize = 16;
         header_.audioFormat = 1; // PCM
@@ -232,8 +240,8 @@ public:
         if (fileStream_.good())
         {
             // Update header sizes
-            header_.dataSize = header_.dataSize + static_cast<uint32_t>(size);
-            header_.riffSize = header_.riffSize + static_cast<uint32_t>(size);
+            header_.dataSize += static_cast<uint32_t>(size);
+            header_.riffSize = 36 + header_.dataSize;
             return size;
         }
         return 0;
@@ -413,15 +421,48 @@ private:
     size_t size;
 
 public:
-    BufferManager(size_t bufferSize) : size(bufferSize)
+    BufferManager(size_t bufferSize) : size(0)
     {
-        buffer = std::make_unique<char[]>(bufferSize);
+        // Check for reasonable buffer size limits
+        const size_t MAX_BUFFER_SIZE = 64 * 1024 * 1024; // 64MB max
+        const size_t MIN_BUFFER_SIZE = 480;              // Minimum reasonable buffer size
+
+        if (bufferSize < MIN_BUFFER_SIZE)
+        {
+            printf("Warning: Buffer size %zu is very small, using minimum %zu\n",
+                   bufferSize, MIN_BUFFER_SIZE);
+            bufferSize = MIN_BUFFER_SIZE;
+        }
+
+        if (bufferSize > MAX_BUFFER_SIZE)
+        {
+            printf("Warning: Buffer size %zu is too large, limiting to %zu\n",
+                   bufferSize, MAX_BUFFER_SIZE);
+            bufferSize = MAX_BUFFER_SIZE;
+        }
+
+        try
+        {
+            buffer = std::make_unique<char[]>(bufferSize);
+            size = bufferSize;
+        }
+        catch (const std::bad_alloc &e)
+        {
+            size = 0;
+            printf("Error: Failed to allocate buffer of size %zu: %s\n", bufferSize, e.what());
+        }
+
+        if (!buffer)
+        {
+            printf("Error: Failed to allocate buffer\n");
+        }
     }
 
     ~BufferManager() = default;
 
     char *get() { return buffer.get(); }
     size_t getSize() const { return size; }
+    bool isValid() const { return buffer != nullptr && size > 0; }
 };
 
 /************************** Audio Mode Definitions ******************************/
@@ -433,303 +474,21 @@ enum AudioMode
     MODE_DUPLEX = 2    // record and play simultaneously
 };
 
-/************************** Help function ******************************/
-static void help()
-{
-    printf("Audio Test Client - Combined Record and Play Demo\n");
-    printf("Usage: audio_test_client -m{mode} [options] [audio_file]\n");
-    printf("Modes:\n");
-    printf("  -m0   Record mode\n");
-    printf("  -m1   Play mode\n");
-    printf("  -m2   Duplex mode (record and play simultaneously)\n\n");
-
-    printf("Record Options:\n");
-    printf("  -s{inputSource}     Set audio source\n");
-    printf("  -r{sampleRate}      Set sample rate\n");
-    printf("  -c{channelCount}    Set channel count\n");
-    printf("  -f{format}          Set audio format\n");
-    printf("  -F{inputFlag}       Set audio input flag\n");
-    printf("  -z{minFrameCount}   Set min frame count\n");
-    printf("  -d{duration}        Set recording duration(s) (0 = unlimited)\n\n");
-
-    printf("Play Options:\n");
-    printf("  -u{usage}           Set audio usage\n");
-    printf("  -C{contentType}     Set content type\n");
-    printf("  -O{outputFlag}      Set audio output flag\n");
-    printf("  -z{minFrameCount}   Set min frame count\n\n");
-
-    printf("General Options:\n");
-    printf("  -h                  Show this help message\n\n");
-
-    printf("AudioRecord Source Options(-s{inputSource}):\n");
-    printf("    0 = AUDIO_SOURCE_DEFAULT\n");
-    printf("    1 = AUDIO_SOURCE_MIC\n");
-    printf("    2 = AUDIO_SOURCE_VOICE_UPLINK\n");
-    printf("    3 = AUDIO_SOURCE_VOICE_DOWNLINK\n");
-    printf("    4 = AUDIO_SOURCE_VOICE_CALL\n");
-    printf("    5 = AUDIO_SOURCE_CAMCORDER\n");
-    printf("    6 = AUDIO_SOURCE_VOICE_RECOGNITION\n");
-    printf("    7 = AUDIO_SOURCE_VOICE_COMMUNICATION\n");
-    printf("    8 = AUDIO_SOURCE_REMOTE_SUBMIX\n");
-    printf("    9 = AUDIO_SOURCE_UNPROCESSED\n");
-    printf("    10 = AUDIO_SOURCE_VOICE_PERFORMANCE\n");
-    printf("    1997 = AUDIO_SOURCE_ECHO_REFERENCE\n");
-    printf("    1998 = AUDIO_SOURCE_FM_TUNER\n");
-    printf("    1999 = AUDIO_SOURCE_HOTWORD\n\n");
-
-    printf("AudioRecord SampleRate Options(-r{sampleRate}):\n");
-    printf("    8000, 16000, 32000, 48000\n\n");
-
-    printf("AudioRecord Channel Count Options(-c{channelCount}):\n");
-    printf("    1, 2, 4, 6, 8, 12, 16\n\n");
-
-    printf("AudioRecord Format Options(-f{format}):\n");
-    printf("    1 = AUDIO_FORMAT_PCM_16_BIT\n");
-    printf("    2 = AUDIO_FORMAT_PCM_8_BIT\n");
-    printf("    3 = AUDIO_FORMAT_PCM_32_BIT\n");
-    printf("    4 = AUDIO_FORMAT_PCM_8_24_BIT\n");
-    printf("    5 = AUDIO_FORMAT_PCM_FLOAT\n");
-    printf("    6 = AUDIO_FORMAT_PCM_24_BIT_PACKED\n\n");
-
-    printf("AudioRecord Input Flag Options(-F{inputFlag}):\n");
-    printf("    0 = AUDIO_INPUT_FLAG_NONE\n");
-    printf("    1 = AUDIO_INPUT_FLAG_FAST\n");
-    printf("    2 = AUDIO_INPUT_FLAG_HW_HOTWORD\n");
-    printf("    4 = AUDIO_INPUT_FLAG_RAW\n");
-    printf("    8 = AUDIO_INPUT_FLAG_SYNC\n");
-    printf("    16 = AUDIO_INPUT_FLAG_MMAP_NOIRQ\n");
-    printf("    32 = AUDIO_INPUT_FLAG_VOIP_TX\n");
-    printf("    64 = AUDIO_INPUT_FLAG_HW_AV_SYNC\n");
-    printf("    128 = AUDIO_INPUT_FLAG_DIRECT\n");
-    printf("    256 = AUDIO_INPUT_FLAG_DIRECT_PROCESSED\n");
-    printf("    512 = AUDIO_INPUT_FLAG_VOICE_COMMUNICATION\n");
-    printf("    1024 = AUDIO_INPUT_FLAG_AEC_CONVERGED\n");
-    printf("    2048 = AUDIO_INPUT_FLAG_NO_PERSISTENT_CACHE\n");
-    printf("    4096 = AUDIO_INPUT_FLAG_HW_HOTWORD_CONTINUOUS\n");
-    printf("    8192 = AUDIO_INPUT_FLAG_BUILTIN_FAR_FIELD_MIC\n\n");
-
-    printf("AudioRecord/AudioTrack min frameCount Options(-z{minFrameCount}):\n");
-    printf("    480, 960, 1920\n\n");
-
-    printf("AudioRecord Duration Options(-d{duration}):\n");
-    printf("    0 = unlimited, otherwise in seconds\n\n");
-
-    printf("AudioTrack Usage Options(-u{usage}):\n");
-    printf("    0 = AUDIO_USAGE_UNKNOWN\n");
-    printf("    1 = AUDIO_USAGE_MEDIA\n");
-    printf("    2 = AUDIO_USAGE_VOICE_COMMUNICATION\n");
-    printf("    3 = AUDIO_USAGE_VOICE_COMMUNICATION_SIGNALLING\n");
-    printf("    4 = AUDIO_USAGE_ALARM\n");
-    printf("    5 = AUDIO_USAGE_NOTIFICATION\n");
-    printf("    6 = AUDIO_USAGE_NOTIFICATION_TELEPHONY_RINGTONE\n");
-    printf("    7 = AUDIO_USAGE_NOTIFICATION_COMMUNICATION_REQUEST\n");
-    printf("    8 = AUDIO_USAGE_NOTIFICATION_COMMUNICATION_INSTANT\n");
-    printf("    9 = AUDIO_USAGE_NOTIFICATION_COMMUNICATION_DELAYED\n");
-    printf("    10 = AUDIO_USAGE_NOTIFICATION_EVENT\n");
-    printf("    11 = AUDIO_USAGE_ASSISTANCE_ACCESSIBILITY\n");
-    printf("    12 = AUDIO_USAGE_ASSISTANCE_NAVIGATION_GUIDANCE\n");
-    printf("    13 = AUDIO_USAGE_ASSISTANCE_SONIFICATION\n");
-    printf("    14 = AUDIO_USAGE_GAME\n");
-    printf("    15 = AUDIO_USAGE_VIRTUAL_SOURCE\n");
-    printf("    16 = AUDIO_USAGE_ASSISTANT\n");
-    printf("    17 = AUDIO_USAGE_CALL_ASSISTANT\n");
-    printf("    1000 = AUDIO_USAGE_EMERGENCY\n");
-    printf("    1001 = AUDIO_USAGE_SAFETY\n");
-    printf("    1002 = AUDIO_USAGE_VEHICLE_STATUS\n");
-    printf("    1003 = AUDIO_USAGE_ANNOUNCEMENT\n\n");
-
-    printf("AudioTrack Content Type Options(-C{contentType}):\n");
-    printf("    0 = AUDIO_CONTENT_TYPE_UNKNOWN\n");
-    printf("    1 = AUDIO_CONTENT_TYPE_SPEECH\n");
-    printf("    2 = AUDIO_CONTENT_TYPE_MUSIC\n");
-    printf("    3 = AUDIO_CONTENT_TYPE_MOVIE\n");
-    printf("    4 = AUDIO_CONTENT_TYPE_SONIFICATION\n\n");
-
-    printf("AudioTrack Output Flag Options(-O{outputFlag}):\n");
-    printf("    0 = AUDIO_OUTPUT_FLAG_NONE\n");
-    printf("    1 = AUDIO_OUTPUT_FLAG_DIRECT\n");
-    printf("    2 = AUDIO_OUTPUT_FLAG_PRIMARY\n");
-    printf("    4 = AUDIO_OUTPUT_FLAG_FAST\n");
-    printf("    8 = AUDIO_OUTPUT_FLAG_DEEP_BUFFER\n");
-    printf("    16 = AUDIO_OUTPUT_FLAG_COMPRESS_OFFLOAD\n");
-    printf("    32 = AUDIO_OUTPUT_FLAG_NON_BLOCKING\n");
-    printf("    64 = AUDIO_OUTPUT_FLAG_HW_AV_SYNC\n");
-    printf("    128 = AUDIO_OUTPUT_FLAG_TTS\n");
-    printf("    256 = AUDIO_OUTPUT_FLAG_RAW\n");
-    printf("    512 = AUDIO_OUTPUT_FLAG_SYNC\n");
-    printf("    1024 = AUDIO_OUTPUT_FLAG_IEC958_NONAUDIO\n");
-    printf("    2048 = AUDIO_OUTPUT_FLAG_LOW_LATENCY\n");
-    printf("    4096 = AUDIO_OUTPUT_FLAG_DEEP_BUFFER_COMPRESS_OFFLOAD\n");
-    printf("    8192 = AUDIO_OUTPUT_FLAG_DIRECT_PCM\n");
-    printf("    16384 = AUDIO_OUTPUT_FLAG_MMAP_NOIRQ\n");
-    printf("    32768 = AUDIO_OUTPUT_FLAG_VOIP_RX\n");
-    printf("    65536 = AUDIO_OUTPUT_FLAG_LOW_LATENCY_VOIP\n\n");
-
-    printf("Examples:\n");
-    printf("    Record: audio_test_client -m0 -s1 -r48000 -c2 -f1 -F1 -z480 -d10\n");
-    printf("    Play:   audio_test_client -m1 -u5 -C0 -O4 -z480 /data/audio_test.wav\n");
-    printf("    Duplex: audio_test_client -m2 -s1 -r48000 -c2 -f1 -F1 -u5 -C0 -O4 -z480 -d30\n");
-}
-
-int32_t recordAudio(
-    audio_source_t inputSource,
-    int32_t sampleRate,
-    int32_t channelCount,
-    audio_format_t format,
-    audio_input_flags_t inputFlag,
-    size_t minFrameCount,
-    int32_t durationSeconds,
-    const std::string &recordFile);
-
-int32_t playAudio(
-    audio_usage_t usage,
-    audio_content_type_t contentType,
-    audio_output_flags_t outputFlag,
-    size_t minFrameCount,
-    const std::string &playFile);
-
-int32_t duplexAudio(
-    audio_source_t inputSource,
-    int32_t sampleRate,
-    int32_t channelCount,
-    audio_format_t format,
-    audio_input_flags_t inputFlag,
-    audio_usage_t usage,
-    audio_content_type_t contentType,
-    audio_output_flags_t outputFlag,
-    size_t minFrameCount,
-    int32_t durationSeconds,
-    const std::string &recordFile);
-
-/* Global stop flag for signal handling (async-signal-safe) */
-static volatile sig_atomic_t g_stopRequested = 0;
-static audio_format_t parse_format_option(int v);
-
-/************************** Main function ******************************/
-int32_t main(int32_t argc, char **argv)
-{
-    // Default parameters
-    AudioMode mode = MODE_INVALID; // default mode is invalid
-
-    // Record parameters
-    audio_source_t inputSource = AUDIO_SOURCE_MIC;         // default audio source
-    int32_t recordSampleRate = 48000;                      // default sample rate
-    int32_t recordChannelCount = 1;                        // default channel count
-    audio_format_t recordFormat = AUDIO_FORMAT_PCM_16_BIT; // default format
-    audio_input_flags_t inputFlag = AUDIO_INPUT_FLAG_NONE; // default input flag
-    size_t recordMinFrameCount = 0;                        // will be calculated
-    int32_t durationSeconds = 0;                           // recording duration in seconds, 0 = unlimited
-    // 根据传入参数和当前时间自动生成带时间戳的录音文件，如果在命令行参数后指定录音文件，则不会自动生成。
-    // 不可在此指定录音文件，要么在命令行参数后指定，要么不指定，自动生成带时间戳的录音文件。
-    std::string recordFilePath = "";
-
-    // Play parameters
-    audio_usage_t usage = AUDIO_USAGE_MEDIA;                       // default audio usage
-    audio_content_type_t contentType = AUDIO_CONTENT_TYPE_UNKNOWN; // default content type
-    audio_output_flags_t outputFlag = AUDIO_OUTPUT_FLAG_NONE;      // default output flag
-    size_t playMinFrameCount = 0;                                  // will be calculated
-    // 如果没有在命令行参数后指定播放文件，则使用此默认的音频文件。
-    std::string playFilePath = "/data/audio_test.wav"; // default audio file path
-
-    /************** parse input params **************/
-    int32_t opt = 0;
-    while ((opt = getopt(argc, argv, "m:s:r:c:f:F:u:C:O:z:d:h")) != -1)
-    {
-        switch (opt)
-        {
-        case 'm': // mode
-            mode = static_cast<AudioMode>(atoi(optarg));
-            break;
-        case 's': // audio source
-            inputSource = static_cast<audio_source_t>(atoi(optarg));
-            break;
-        case 'r': // sample rate
-            recordSampleRate = atoi(optarg);
-            break;
-        case 'c': // channel count
-            recordChannelCount = atoi(optarg);
-            break;
-        case 'f': // format (map friendly numbers to audio_format_t)
-        {
-            int32_t f = atoi(optarg);
-            recordFormat = parse_format_option(f);
-            break;
-        }
-        case 'F': // input flag
-            inputFlag = static_cast<audio_input_flags_t>(atoi(optarg));
-            break;
-        case 'd': // recording duration in seconds
-            durationSeconds = atoi(optarg);
-            break;
-        case 'u': // audio usage
-            usage = static_cast<audio_usage_t>(atoi(optarg));
-            break;
-        case 'C': // audio content type
-            contentType = static_cast<audio_content_type_t>(atoi(optarg));
-            break;
-        case 'O': // output flag
-            outputFlag = static_cast<audio_output_flags_t>(atoi(optarg));
-            break;
-        case 'z': // min frame count
-            recordMinFrameCount = atoi(optarg);
-            playMinFrameCount = recordMinFrameCount; // use same min frame count for play if not specified separately
-            break;
-        case 'h': // help for use
-            help();
-            return 0;
-        default:
-            help();
-            return -1;
-        }
-    }
-
-    /* get audio file path */
-    if (optind < argc)
-    {
-        std::string tmpFile = std::string{argv[optind]};
-        if (mode == MODE_PLAY)
-        {
-            playFilePath = tmpFile;
-        }
-        else
-        {
-            recordFilePath = tmpFile;
-        }
-    }
-
-    switch (mode)
-    {
-    case MODE_RECORD:
-        printf("Running in RECORD mode\n");
-        return recordAudio(inputSource, recordSampleRate, recordChannelCount, recordFormat,
-                           inputFlag, recordMinFrameCount, durationSeconds, recordFilePath);
-
-    case MODE_PLAY:
-        printf("Running in PLAY mode\n");
-        return playAudio(usage, contentType, outputFlag, playMinFrameCount, playFilePath);
-
-    case MODE_DUPLEX:
-        printf("Running in DUPLEX mode (record and play simultaneously)\n");
-        return duplexAudio(inputSource, recordSampleRate, recordChannelCount, recordFormat,
-                           inputFlag, usage, contentType, outputFlag, recordMinFrameCount,
-                           durationSeconds, recordFilePath);
-
-    default:
-        printf("Error: Invalid mode specified: %d\n", static_cast<int>(mode));
-        help();
-        return -1;
-    }
-
-    return 0;
-}
+/* Global pointer to WAVFile for signal handling */
+static WAVFile *g_wavFile = nullptr;
 
 // Signal handler for SIGINT (Ctrl+C)
 void signalHandler(int signal)
 {
     if (signal == SIGINT)
     {
-        // Set a flag and let the main loop finalize resources safely.
-        g_stopRequested = 1;
+        printf("\nReceived SIGINT (Ctrl+C), finalizing recording...\n");
+        if (g_wavFile != nullptr)
+        {
+            g_wavFile->finalize(); // Finalize the WAV file
+            g_wavFile = nullptr;   // Clear the pointer
+        }
+        exit(0);
     }
 }
 
@@ -862,7 +621,7 @@ int32_t recordAudio(
     printf("AudioRecord init\n");
     sp<AudioRecord> audioRecord = new AudioRecord(attributionSource);
     if (audioRecord->set(
-            inputSource,                // source (use requested input source)
+            inputSource,                // source
             sampleRate,                 // sampleRate
             format,                     // format
             channelMask,                // channelMask
@@ -904,6 +663,8 @@ int32_t recordAudio(
         printf("Error: can't create output file %s\n", audioFilePath.c_str());
         return -1;
     }
+    /************** set global WAV file pointer **************/
+    g_wavFile = &wavFile;
 
     /************** Register signal handler for SIGINT (Ctrl+C) **************/
     signal(SIGINT, signalHandler);
@@ -930,6 +691,13 @@ int32_t recordAudio(
 
     /*************** BufferManager for audio data **************/
     BufferManager bufferManager(bufferSize);
+    if (!bufferManager.isValid())
+    {
+        printf("Error: Failed to create valid buffer manager\n");
+        audioRecord->stop();
+        wavFile.close();
+        return -1;
+    }
     char *buffer = bufferManager.get();
 
     if (durationSeconds > 0)
@@ -943,12 +711,7 @@ int32_t recordAudio(
     uint32_t maxBytesToRecord = (durationSeconds > 0) ? durationSeconds * bytesPerSecond : std::numeric_limits<uint32_t>::max();
     while (true)
     {
-        if (g_stopRequested)
-        {
-            printf("Stop requested. Finalizing...\n");
-            break;
-        }
-
+        /************* Read data from AudioRecord **************/
         bytesRead = audioRecord->read(buffer, bufferSize);
         if (bytesRead < 0)
         {
@@ -1192,6 +955,12 @@ int32_t playAudio(
 
     /*************** BufferManager for audio data **************/
     BufferManager bufferManager(bufferSize);
+    if (!bufferManager.isValid())
+    {
+        printf("Error: Failed to create valid buffer manager\n");
+        audioTrack->stop();
+        return -1;
+    }
     char *buffer = bufferManager.get();
 
     printf("Playback started. Playing audio from: %s\n", playFile.c_str());
@@ -1340,7 +1109,7 @@ int32_t duplexAudio(
     printf("AudioRecord init\n");
     sp<AudioRecord> audioRecord = new AudioRecord(attributionSource);
     if (audioRecord->set(
-            inputSource,                // source (use requested input source)
+            inputSource,                // source
             sampleRate,                 // sampleRate
             format,                     // format
             channelMaskIn,              // channelMask
@@ -1429,6 +1198,8 @@ int32_t duplexAudio(
         printf("Error: can't create output file %s\n", audioFilePath.c_str());
         return -1;
     }
+    /************** set global pointer to WAVFile **************/
+    g_wavFile = &wavFile;
 
     /************** Register signal handler for SIGINT (Ctrl+C) **************/
     signal(SIGINT, signalHandler);
@@ -1466,6 +1237,14 @@ int32_t duplexAudio(
 
     /*************** BufferManager for audio data **************/
     BufferManager recordBufferManager(bufferSize);
+    if (!recordBufferManager.isValid())
+    {
+        printf("Error: Failed to create valid buffer manager\n");
+        audioRecord->stop();
+        audioTrack->stop();
+        wavFile.close();
+        return -1;
+    }
     char *recordBuffer = recordBufferManager.get();
 
     if (durationSeconds > 0)
@@ -1482,14 +1261,6 @@ int32_t duplexAudio(
     bool playing = true;
     while (recording && playing)
     {
-        if (g_stopRequested)
-        {
-            printf("Stop requested. Finalizing...\n");
-            recording = false;
-            playing = false;
-            break;
-        }
-
         /************** Read from AudioRecord **************/
         bytesRead = audioRecord->read(recordBuffer, bufferSize);
         if (bytesRead < 0)
@@ -1592,6 +1363,262 @@ int32_t duplexAudio(
     wavFile.finalize();
     printf("Total bytes read: %u\n", totalBytesRead);
     printf("Duplex audio completed. Recording saved to: %s\n", audioFilePath.c_str());
+
+    return 0;
+}
+
+/************************** Help function ******************************/
+static void help()
+{
+    printf("Audio Test Client - Combined Record and Play Demo\n");
+    printf("Usage: audio_test_client -m{mode} [options] [audio_file]\n");
+    printf("Modes:\n");
+    printf("  -m0   Record mode\n");
+    printf("  -m1   Play mode\n");
+    printf("  -m2   Duplex mode (record and play simultaneously)\n\n");
+
+    printf("Record Options:\n");
+    printf("  -s{inputSource}     Set audio source\n");
+    printf("  -r{sampleRate}      Set sample rate\n");
+    printf("  -c{channelCount}    Set channel count\n");
+    printf("  -f{format}          Set audio format\n");
+    printf("  -F{inputFlag}       Set audio input flag\n");
+    printf("  -z{minFrameCount}   Set min frame count\n");
+    printf("  -d{duration}        Set recording duration(s) (0 = unlimited)\n\n");
+
+    printf("Play Options:\n");
+    printf("  -u{usage}           Set audio usage\n");
+    printf("  -C{contentType}     Set content type\n");
+    printf("  -O{outputFlag}      Set audio output flag\n");
+    printf("  -z{minFrameCount}   Set min frame count\n\n");
+
+    printf("General Options:\n");
+    printf("  -h                  Show this help message\n\n");
+
+    printf("AudioRecord Source Options(-s{inputSource}):\n");
+    printf("    0 = AUDIO_SOURCE_DEFAULT\n");
+    printf("    1 = AUDIO_SOURCE_MIC\n");
+    printf("    2 = AUDIO_SOURCE_VOICE_UPLINK\n");
+    printf("    3 = AUDIO_SOURCE_VOICE_DOWNLINK\n");
+    printf("    4 = AUDIO_SOURCE_VOICE_CALL\n");
+    printf("    5 = AUDIO_SOURCE_CAMCORDER\n");
+    printf("    6 = AUDIO_SOURCE_VOICE_RECOGNITION\n");
+    printf("    7 = AUDIO_SOURCE_VOICE_COMMUNICATION\n");
+    printf("    8 = AUDIO_SOURCE_REMOTE_SUBMIX\n");
+    printf("    9 = AUDIO_SOURCE_UNPROCESSED\n");
+    printf("    10 = AUDIO_SOURCE_VOICE_PERFORMANCE\n");
+    printf("    1997 = AUDIO_SOURCE_ECHO_REFERENCE\n");
+    printf("    1998 = AUDIO_SOURCE_FM_TUNER\n");
+    printf("    1999 = AUDIO_SOURCE_HOTWORD\n\n");
+
+    printf("AudioRecord SampleRate Options(-r{sampleRate}):\n");
+    printf("    8000, 16000, 32000, 48000\n\n");
+
+    printf("AudioRecord Channel Count Options(-c{channelCount}):\n");
+    printf("    1, 2, 4, 6, 8, 12, 16\n\n");
+
+    printf("AudioRecord Format Options(-f{format}):\n");
+    printf("    1 = AUDIO_FORMAT_PCM_16_BIT\n");
+    printf("    2 = AUDIO_FORMAT_PCM_8_BIT\n");
+    printf("    3 = AUDIO_FORMAT_PCM_32_BIT\n");
+    printf("    4 = AUDIO_FORMAT_PCM_8_24_BIT\n");
+    printf("    5 = AUDIO_FORMAT_PCM_FLOAT\n");
+    printf("    6 = AUDIO_FORMAT_PCM_24_BIT_PACKED\n\n");
+
+    printf("AudioRecord Input Flag Options(-F{inputFlag}):\n");
+    printf("    0 = AUDIO_INPUT_FLAG_NONE\n");
+    printf("    1 = AUDIO_INPUT_FLAG_FAST\n");
+    printf("    2 = AUDIO_INPUT_FLAG_HW_HOTWORD\n");
+    printf("    4 = AUDIO_INPUT_FLAG_RAW\n");
+    printf("    8 = AUDIO_INPUT_FLAG_SYNC\n");
+    printf("    16 = AUDIO_INPUT_FLAG_MMAP_NOIRQ\n");
+    printf("    32 = AUDIO_INPUT_FLAG_VOIP_TX\n");
+    printf("    64 = AUDIO_INPUT_FLAG_HW_AV_SYNC\n");
+    printf("    128 = AUDIO_INPUT_FLAG_DIRECT\n");
+    printf("    256 = AUDIO_INPUT_FLAG_DIRECT_PROCESSED\n");
+    printf("    512 = AUDIO_INPUT_FLAG_VOICE_COMMUNICATION\n");
+    printf("    1024 = AUDIO_INPUT_FLAG_AEC_CONVERGED\n");
+    printf("    2048 = AUDIO_INPUT_FLAG_NO_PERSISTENT_CACHE\n");
+    printf("    4096 = AUDIO_INPUT_FLAG_HW_HOTWORD_CONTINUOUS\n");
+    printf("    8192 = AUDIO_INPUT_FLAG_BUILTIN_FAR_FIELD_MIC\n\n");
+
+    printf("AudioRecord/AudioTrack min frameCount Options(-z{minFrameCount}):\n");
+    printf("    480, 960, 1920\n\n");
+
+    printf("AudioRecord Duration Options(-d{duration}):\n");
+    printf("    0 = unlimited, otherwise in seconds\n\n");
+
+    printf("AudioTrack Usage Options(-u{usage}):\n");
+    printf("    0 = AUDIO_USAGE_UNKNOWN\n");
+    printf("    1 = AUDIO_USAGE_MEDIA\n");
+    printf("    2 = AUDIO_USAGE_VOICE_COMMUNICATION\n");
+    printf("    3 = AUDIO_USAGE_VOICE_COMMUNICATION_SIGNALLING\n");
+    printf("    4 = AUDIO_USAGE_ALARM\n");
+    printf("    5 = AUDIO_USAGE_NOTIFICATION\n");
+    printf("    6 = AUDIO_USAGE_NOTIFICATION_TELEPHONY_RINGTONE\n");
+    printf("    7 = AUDIO_USAGE_NOTIFICATION_COMMUNICATION_REQUEST\n");
+    printf("    8 = AUDIO_USAGE_NOTIFICATION_COMMUNICATION_INSTANT\n");
+    printf("    9 = AUDIO_USAGE_NOTIFICATION_COMMUNICATION_DELAYED\n");
+    printf("    10 = AUDIO_USAGE_NOTIFICATION_EVENT\n");
+    printf("    11 = AUDIO_USAGE_ASSISTANCE_ACCESSIBILITY\n");
+    printf("    12 = AUDIO_USAGE_ASSISTANCE_NAVIGATION_GUIDANCE\n");
+    printf("    13 = AUDIO_USAGE_ASSISTANCE_SONIFICATION\n");
+    printf("    14 = AUDIO_USAGE_GAME\n");
+    printf("    15 = AUDIO_USAGE_VIRTUAL_SOURCE\n");
+    printf("    16 = AUDIO_USAGE_ASSISTANT\n");
+    printf("    17 = AUDIO_USAGE_CALL_ASSISTANT\n");
+    printf("    1000 = AUDIO_USAGE_EMERGENCY\n");
+    printf("    1001 = AUDIO_USAGE_SAFETY\n");
+    printf("    1002 = AUDIO_USAGE_VEHICLE_STATUS\n");
+    printf("    1003 = AUDIO_USAGE_ANNOUNCEMENT\n\n");
+
+    printf("AudioTrack Content Type Options(-C{contentType}):\n");
+    printf("    0 = AUDIO_CONTENT_TYPE_UNKNOWN\n");
+    printf("    1 = AUDIO_CONTENT_TYPE_SPEECH\n");
+    printf("    2 = AUDIO_CONTENT_TYPE_MUSIC\n");
+    printf("    3 = AUDIO_CONTENT_TYPE_MOVIE\n");
+    printf("    4 = AUDIO_CONTENT_TYPE_SONIFICATION\n\n");
+
+    printf("AudioTrack Output Flag Options(-O{outputFlag}):\n");
+    printf("    0 = AUDIO_OUTPUT_FLAG_NONE\n");
+    printf("    1 = AUDIO_OUTPUT_FLAG_DIRECT\n");
+    printf("    2 = AUDIO_OUTPUT_FLAG_PRIMARY\n");
+    printf("    4 = AUDIO_OUTPUT_FLAG_FAST\n");
+    printf("    8 = AUDIO_OUTPUT_FLAG_DEEP_BUFFER\n");
+    printf("    16 = AUDIO_OUTPUT_FLAG_COMPRESS_OFFLOAD\n");
+    printf("    32 = AUDIO_OUTPUT_FLAG_NON_BLOCKING\n");
+    printf("    64 = AUDIO_OUTPUT_FLAG_HW_AV_SYNC\n");
+    printf("    128 = AUDIO_OUTPUT_FLAG_TTS\n");
+    printf("    256 = AUDIO_OUTPUT_FLAG_RAW\n");
+    printf("    512 = AUDIO_OUTPUT_FLAG_SYNC\n");
+    printf("    1024 = AUDIO_OUTPUT_FLAG_IEC958_NONAUDIO\n");
+    printf("    2048 = AUDIO_OUTPUT_FLAG_LOW_LATENCY\n");
+    printf("    4096 = AUDIO_OUTPUT_FLAG_DEEP_BUFFER_COMPRESS_OFFLOAD\n");
+    printf("    8192 = AUDIO_OUTPUT_FLAG_DIRECT_PCM\n");
+    printf("    16384 = AUDIO_OUTPUT_FLAG_MMAP_NOIRQ\n");
+    printf("    32768 = AUDIO_OUTPUT_FLAG_VOIP_RX\n");
+    printf("    65536 = AUDIO_OUTPUT_FLAG_LOW_LATENCY_VOIP\n\n");
+
+    printf("Examples:\n");
+    printf("    Record: audio_test_client -m0 -s1 -r48000 -c2 -f1 -F1 -z480 -d10\n");
+    printf("    Play:   audio_test_client -m1 -u5 -C0 -O4 -z480 /data/audio_test.wav\n");
+    printf("    Duplex: audio_test_client -m2 -s1 -r48000 -c2 -f1 -F1 -u5 -C0 -O4 -z480 -d30\n");
+}
+
+/************************** Main function ******************************/
+int32_t main(int32_t argc, char **argv)
+{
+    // Default parameters
+    AudioMode mode = MODE_INVALID; // default mode is invalid
+
+    // Record parameters
+    audio_source_t inputSource = AUDIO_SOURCE_MIC;         // default audio source
+    int32_t recordSampleRate = 48000;                      // default sample rate
+    int32_t recordChannelCount = 1;                        // default channel count
+    audio_format_t recordFormat = AUDIO_FORMAT_PCM_16_BIT; // default format
+    audio_input_flags_t inputFlag = AUDIO_INPUT_FLAG_NONE; // default input flag
+    size_t recordMinFrameCount = 0;                        // will be calculated
+    int32_t durationSeconds = 0;                           // recording duration in seconds, 0 = unlimited
+    // 根据传入参数和当前时间自动生成带时间戳的录音文件，如果在命令行参数后指定录音文件，则不会自动生成。
+    // 不可在此指定录音文件，要么在命令行参数后指定，要么不指定，自动生成带时间戳的录音文件。
+    std::string recordFilePath = "";
+
+    // Play parameters
+    audio_usage_t usage = AUDIO_USAGE_MEDIA;                       // default audio usage
+    audio_content_type_t contentType = AUDIO_CONTENT_TYPE_UNKNOWN; // default content type
+    audio_output_flags_t outputFlag = AUDIO_OUTPUT_FLAG_NONE;      // default output flag
+    size_t playMinFrameCount = 0;                                  // will be calculated
+    // 如果没有在命令行参数后指定播放文件，则使用此默认的音频文件。
+    std::string playFilePath = "/data/audio_test.wav"; // default audio file path
+
+    /************** parse input params **************/
+    int32_t opt = 0;
+    while ((opt = getopt(argc, argv, "m:s:r:c:f:F:u:C:O:z:d:h")) != -1)
+    {
+        switch (opt)
+        {
+        case 'm': // mode
+            mode = static_cast<AudioMode>(atoi(optarg));
+            break;
+        case 's': // audio source
+            inputSource = static_cast<audio_source_t>(atoi(optarg));
+            break;
+        case 'r': // sample rate
+            recordSampleRate = atoi(optarg);
+            break;
+        case 'c': // channel count
+            recordChannelCount = atoi(optarg);
+            break;
+        case 'f': // format (map friendly numbers to audio_format_t)
+        {
+            int32_t f = atoi(optarg);
+            recordFormat = parse_format_option(f);
+            break;
+        }
+        case 'F': // input flag
+            inputFlag = static_cast<audio_input_flags_t>(atoi(optarg));
+            break;
+        case 'd': // recording duration in seconds
+            durationSeconds = atoi(optarg);
+            break;
+        case 'u': // audio usage
+            usage = static_cast<audio_usage_t>(atoi(optarg));
+            break;
+        case 'C': // audio content type
+            contentType = static_cast<audio_content_type_t>(atoi(optarg));
+            break;
+        case 'O': // output flag
+            outputFlag = static_cast<audio_output_flags_t>(atoi(optarg));
+            break;
+        case 'z': // min frame count
+            recordMinFrameCount = atoi(optarg);
+            playMinFrameCount = recordMinFrameCount; // use same min frame count for play if not specified separately
+            break;
+        case 'h': // help for use
+            help();
+            return 0;
+        default:
+            help();
+            return -1;
+        }
+    }
+
+    /* get audio file path */
+    if (optind < argc)
+    {
+        std::string tmpFile = std::string{argv[optind]};
+        if (mode == MODE_PLAY)
+        {
+            playFilePath = tmpFile;
+        }
+        else
+        {
+            recordFilePath = tmpFile;
+        }
+    }
+
+    switch (mode)
+    {
+    case MODE_RECORD:
+        printf("Running in RECORD mode\n");
+        return recordAudio(inputSource, recordSampleRate, recordChannelCount, recordFormat,
+                           inputFlag, recordMinFrameCount, durationSeconds, recordFilePath);
+
+    case MODE_PLAY:
+        printf("Running in PLAY mode\n");
+        return playAudio(usage, contentType, outputFlag, playMinFrameCount, playFilePath);
+
+    case MODE_DUPLEX:
+        printf("Running in DUPLEX mode (record and play simultaneously)\n");
+        return duplexAudio(inputSource, recordSampleRate, recordChannelCount, recordFormat,
+                           inputFlag, usage, contentType, outputFlag, recordMinFrameCount,
+                           durationSeconds, recordFilePath);
+
+    default:
+        printf("Error: Invalid mode specified: %d\n", static_cast<int>(mode));
+        help();
+        return -1;
+    }
 
     return 0;
 }
