@@ -15,6 +15,7 @@ common_header_libraries := \
     libmediametrics_headers
 
 common_cflags := \
+    -fexceptions \
     -Wextra \
     -Wno-unused-parameter \
     -Wall \

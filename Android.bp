@@ -15,6 +15,7 @@ cc_defaults {
     ],
     gtest: false,
     cflags: [
+        "-fexceptions",
         "-Wextra",
         "-Wno-unused-parameter",
         "-Wall",

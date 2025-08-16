@@ -708,7 +708,8 @@ int32_t recordAudio(
     uint32_t retryCount = 0;
     uint32_t nextProgressReport = bytesPerSecond * kProgressReportInterval;
     uint32_t nextHeaderUpdate = bytesPerSecond * kHeaderUpdateInterval;
-    uint32_t maxBytesToRecord = (durationSeconds > 0) ? durationSeconds * bytesPerSecond : std::numeric_limits<uint32_t>::max();
+    uint32_t maxBytesToRecord = (durationSeconds > 0) ? static_cast<uint32_t>(durationSeconds) * bytesPerSecond : std::numeric_limits<uint32_t>::max();
+
     while (true)
     {
         /************* Read data from AudioRecord **************/
@@ -1256,7 +1257,7 @@ int32_t duplexAudio(
     uint32_t playRetryCount = 0;
     uint32_t nextProgressReport = bytesPerSecond * kProgressReportInterval;
     uint32_t nextHeaderUpdate = bytesPerSecond * kHeaderUpdateInterval;
-    uint32_t maxBytesToRecord = (durationSeconds > 0) ? durationSeconds * bytesPerSecond : std::numeric_limits<uint32_t>::max();
+    uint32_t maxBytesToRecord = (durationSeconds > 0) ? static_cast<uint32_t>(durationSeconds) * bytesPerSecond : std::numeric_limits<uint32_t>::max();
     bool recording = true;
     bool playing = true;
     while (recording && playing)
