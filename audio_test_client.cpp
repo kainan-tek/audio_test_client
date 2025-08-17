@@ -29,7 +29,7 @@ using namespace android;
 using android::content::AttributionSourceState;
 
 /* max data size for reading */
-static constexpr uint32_t MAX_DATA_SIZE = 2u * 1024u * 1024u * 1024u; // 2 GiB
+static constexpr uint32_t MAX_AUDIO_DATA_SIZE = 2u * 1024u * 1024u * 1024u; // 2 GiB
 
 /************************** WAV File Management ******************************/
 class WAVFile
@@ -120,11 +120,11 @@ private:
     Header header_;
     std::string filePath_;
     mutable std::fstream fileStream_;
-    bool headerWritten_;
+    bool isHeaderValid_;
     std::streampos dataSizePos_; // Position of dataSize field for updates
 
 public:
-    WAVFile() : headerWritten_(false)
+    WAVFile() : isHeaderValid_(false)
     {
         // Initialize header with default values
         memset(&header_, 0, sizeof(Header));
@@ -178,7 +178,7 @@ public:
 
         // Write initial header with placeholder values
         header_.write(fileStream_);
-        headerWritten_ = true;
+        isHeaderValid_ = true;
         dataSizePos_ = fileStream_.tellp() - std::streamoff(4); // Position of dataSize field
 
         return fileStream_.good();
@@ -212,7 +212,7 @@ public:
             return false;
         }
 
-        headerWritten_ = true;
+        isHeaderValid_ = true;
         return fileStream_.good();
     }
 
@@ -225,7 +225,7 @@ public:
      */
     size_t writeData(const char *data, size_t size)
     {
-        if (!fileStream_.is_open() || !headerWritten_)
+        if (!fileStream_.is_open() || !isHeaderValid_)
         {
             return 0;
         }
@@ -254,7 +254,7 @@ public:
      */
     void updateHeader()
     {
-        if (fileStream_.is_open() && headerWritten_)
+        if (fileStream_.is_open() && isHeaderValid_)
         {
             // Save current position
             std::streampos currentPos = fileStream_.tellp();
@@ -284,7 +284,7 @@ public:
      */
     size_t readData(char *data, size_t size)
     {
-        if (!fileStream_.is_open() || !headerWritten_)
+        if (!fileStream_.is_open() || !isHeaderValid_)
         {
             return 0;
         }
@@ -298,7 +298,7 @@ public:
      */
     void finalize()
     {
-        if (fileStream_.is_open() && headerWritten_)
+        if (fileStream_.is_open() && isHeaderValid_)
         {
             // Update header with final sizes
             std::streampos currentPos = fileStream_.tellp();
@@ -763,9 +763,9 @@ int32_t recordAudio(
         }
 
         /*************** Check max data size **************/
-        if (totalBytesRead >= MAX_DATA_SIZE)
+        if (totalBytesRead >= MAX_AUDIO_DATA_SIZE)
         {
-            printf("Warning: AudioRecord data size exceeds limit: %u MB\n", MAX_DATA_SIZE / (1024u * 1024u));
+            printf("Warning: AudioRecord data size exceeds limit: %u MB\n", MAX_AUDIO_DATA_SIZE / (1024u * 1024u));
             break;
         }
 
@@ -1316,9 +1316,9 @@ int32_t duplexAudio(
         }
 
         /*************** Check data size limit **************/
-        if (totalBytesRead >= MAX_DATA_SIZE)
+        if (totalBytesRead >= MAX_AUDIO_DATA_SIZE)
         {
-            printf("Warning: AudioRecord data size exceeds limit: %u MB\n", MAX_DATA_SIZE / (1024u * 1024u));
+            printf("Warning: AudioRecord data size exceeds limit: %u MB\n", MAX_AUDIO_DATA_SIZE / (1024u * 1024u));
             recording = false;
         }
 
@@ -1587,14 +1587,14 @@ int32_t main(int32_t argc, char **argv)
     /* get audio file path */
     if (optind < argc)
     {
-        std::string tmpFile = std::string{argv[optind]};
+        std::string audioFilePath = std::string{argv[optind]};
         if (mode == MODE_PLAY)
         {
-            playFilePath = tmpFile;
+            playFilePath = audioFilePath;
         }
         else
         {
-            recordFilePath = tmpFile;
+            recordFilePath = audioFilePath;
         }
     }
 
