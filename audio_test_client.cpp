@@ -544,12 +544,14 @@ static audio_format_t parse_format_option(int v)
 /************************** Audio Record Function ******************************/
 /**
  * @brief Record audio from the specified input source and save it to a WAV file.
- * @param inputSource The input source to record from.
+ * @param inputSource The input source of the audio to record.
  * @param sampleRate The sample rate of the audio to record.
- * @param channelCount The number of channels of the audio to record.
- * @param bitsPerSample The number of bits per sample of the audio to record.
- * @param durationMs The duration of the recording in milliseconds.
- * @param outputFile The output file to save the recorded audio to.
+ * @param channelCount The number of channels in the audio to record.
+ * @param format The audio format of the audio to record.
+ * @param inputFlag The input flags of the audio to record.
+ * @param minFrameCount The minimum frame count of the audio to record.
+ * @param durationSeconds The duration of the recording in seconds.
+ * @param recordFile The path to save the recorded audio to.
  * @return 0 on success, -1 on failure.
  */
 int32_t recordAudio(
@@ -1033,6 +1035,7 @@ int32_t playAudio(
  * @param  contentType     The content type for playback
  * @param  outputFlag      The output flags for playback
  * @param  minFrameCount   The minimum frame count for both recording and playback
+ * @param  durationSeconds The duration of the recording in seconds
  * @param  recordFile      The file path to save the recorded audio
  * @return  0 if successful, otherwise error code
  */
@@ -1587,14 +1590,13 @@ int32_t main(int32_t argc, char **argv)
     /* get audio file path */
     if (optind < argc)
     {
-        std::string audioFilePath = std::string{argv[optind]};
         if (mode == MODE_PLAY)
         {
-            playFilePath = audioFilePath;
+            playFilePath = argv[optind];
         }
         else
         {
-            recordFilePath = audioFilePath;
+            recordFilePath = argv[optind];
         }
     }
 
