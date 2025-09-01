@@ -1,0 +1,51 @@
+---
+# clang-format configuration for C++ code formatting
+BasedOnStyle: LLVM
+
+# Indentation settings
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+
+# C++ specific settings
+Standard: Cpp11
+AccessModifierOffset: -4
+
+# Brace settings
+BreakBeforeBraces: Attach
+
+# Line length
+ColumnLimit: 120
+
+# Function parameters
+AllowAllParametersOfDeclarationOnNextLine: true
+BinPackParameters: false
+
+# Other formatting options
+AlignAfterOpenBracket: Align
+AlignConsecutiveAssignments: false
+AlignConsecutiveDeclarations: false
+AlignOperands: true
+AlignTrailingComments: true
+
+# Spacing
+SpaceAfterCStyleCast: false
+SpaceBeforeAssignmentOperators: true
+SpaceBeforeParens: ControlStatements
+SpaceInEmptyParentheses: false
+SpacesInAngles: false
+SpacesInParentheses: false
+SpacesInSquareBrackets: false
+
+# Include sorting
+SortIncludes: true
+
+# Pointer alignment
+PointerAlignment: Left
+
+# Constructor initialization
+ConstructorInitializerAllOnOneLineOrOnePerLine: true
+ConstructorInitializerIndentWidth: 4
+
+# Namespaces
+NamespaceIndentation: None
