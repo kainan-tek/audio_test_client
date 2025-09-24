@@ -719,10 +719,6 @@ private:
 
         audio_channel_mask_t channelMask = audio_channel_out_mask_from_count(mConfig.channelCount);
 
-        if (mConfig.minFrameCount == 0) {
-            mConfig.minFrameCount = (mConfig.sampleRate / 1000) * 20; // 20ms
-        }
-
         if (mConfig.minFrameCount < static_cast<size_t>(mConfig.sampleRate / 1000) * 10) {
             mConfig.minFrameCount = static_cast<size_t>(mConfig.sampleRate / 1000) * 10;
             logWarning((std::string("Reset minFrameCount to ") + std::to_string(mConfig.minFrameCount)).c_str());
@@ -1226,23 +1222,107 @@ public:
 
         printf("Record Options:\n");
         printf("  -s{inputSource}     Set audio source\n");
-        printf("  -r{sampleRate}      Set sample rate\n");
-        printf("  -c{channelCount}    Set channel count\n");
+        printf("                       0: AUDIO_SOURCE_DEFAULT\n");
+        printf("                       1: AUDIO_SOURCE_MIC (Microphone)\n");
+        printf("                       2: AUDIO_SOURCE_VOICE_UPLINK (Phone call uplink)\n");
+        printf("                       3: AUDIO_SOURCE_VOICE_DOWNLINK (Phone call downlink)\n");
+        printf("                       4: AUDIO_SOURCE_VOICE_CALL (Phone call bidirectional)\n");
+        printf("                       5: AUDIO_SOURCE_CAMCORDER (Video camera)\n");
+        printf("                       6: AUDIO_SOURCE_VOICE_RECOGNITION (Voice recognition)\n");
+        printf("                       7: AUDIO_SOURCE_VOICE_COMMUNICATION (Voice communication)\n");
+        printf("                       8: AUDIO_SOURCE_REMOTE_SUBMIX (Remote submix)\n");
+        printf("                       9: AUDIO_SOURCE_UNPROCESSED (Unprocessed audio)\n");
+        printf("                       10: AUDIO_SOURCE_VOICE_PERFORMANCE (Voice performance)\n");
+        printf("                       1997: AUDIO_SOURCE_ECHO_REFERENCE (Echo reference)\n");
+        printf("                       1998: AUDIO_SOURCE_FM_TUNER (FM tuner)\n");
+        printf("                       1999: AUDIO_SOURCE_HOTWORD (Hotword)\n");
+        printf("                       2000: AUDIO_SOURCE_ULTRASOUND (Ultrasound)\n");
+        printf("  -r{sampleRate}      Set sample rate (e.g., 8000, 16000, 48000)\n");
+        printf("  -c{channelCount}    Set channel count (1, 2, 4, 6, 8, 12, 16)\n");
         printf("  -f{format}          Set audio format\n");
+        printf("                       0: AUDIO_FORMAT_DEFAULT (Default audio format)\n");
+        printf("                       1: AUDIO_FORMAT_PCM_16_BIT (16-bit PCM)\n");
+        printf("                       2: AUDIO_FORMAT_PCM_8_BIT (8-bit PCM)\n");
+        printf("                       3: AUDIO_FORMAT_PCM_32_BIT (32-bit PCM)\n");
+        printf("                       4: AUDIO_FORMAT_PCM_8_24_BIT (8-bit PCM with 24-bit padding)\n");
+        printf("                       5: AUDIO_FORMAT_PCM_FLOAT (32-bit floating-point PCM)\n");
+        printf("                       6: AUDIO_FORMAT_PCM_24_BIT_PACKED (24-bit packed PCM)\n");
         printf("  -F{inputFlag}       Set audio input flag\n");
-        printf("  -z{minFrameCount}   Set min frame count\n");
+        printf("                       0: AUDIO_INPUT_FLAG_NONE (No special input flag)\n");
+        printf("                       1: AUDIO_INPUT_FLAG_FAST (Fast input flag)\n");
+        printf("                       2: AUDIO_INPUT_FLAG_HW_HOTWORD (Hardware hotword input)\n");
+        printf("                       4: AUDIO_INPUT_FLAG_RAW (Raw audio input)\n");
+        printf("                       8: AUDIO_INPUT_FLAG_SYNC (Synchronous audio input)\n");
+        printf("                       16: AUDIO_INPUT_FLAG_MMAP_NOIRQ (MMAP input without IRQ)\n");
+        printf("                       32: AUDIO_INPUT_FLAG_VOIP_TX (VoIP transmission input)\n");
+        printf("                       64: AUDIO_INPUT_FLAG_HW_AV_SYNC (Hardware audio/visual sync input)\n");
+        printf("                       128: AUDIO_INPUT_FLAG_DIRECT (Direct audio input)\n");
+        printf("                       256: AUDIO_INPUT_FLAG_ULTRASOUND (Ultrasound input)\n");
+        printf("                       512: AUDIO_INPUT_FLAG_HOTWORD_TAP (Hotword tap input)\n");
+        printf("                       1024: AUDIO_INPUT_FLAG_HW_LOOKBACK (Hardware lookback input)\n");
+        printf("  -z{minFrameCount}   Set min frame count (default: system selected)\n");
         printf("  -d{duration}        Set recording duration(s) (0 = unlimited)\n\n");
 
         printf("Play Options:\n");
         printf("  -u{usage}           Set audio usage\n");
+        printf("                       0: AUDIO_USAGE_UNKNOWN (Unknown audio usage)\n");
+        printf("                       1: AUDIO_USAGE_MEDIA (Media playback)\n");
+        printf("                       2: AUDIO_USAGE_VOICE_COMMUNICATION (Voice call)\n");
+        printf("                       3: AUDIO_USAGE_VOICE_COMMUNICATION_SIGNALLING (Call signaling)\n");
+        printf("                       4: AUDIO_USAGE_ALARM (Alarm clock)\n");
+        printf("                       5: AUDIO_USAGE_NOTIFICATION (General notification)\n");
+        printf("                       6: AUDIO_USAGE_NOTIFICATION_TELEPHONY_RINGTONE (Ringtone)\n");
+        printf("                       7: AUDIO_USAGE_NOTIFICATION_COMMUNICATION_REQUEST (Incoming call)\n");
+        printf("                       8: AUDIO_USAGE_NOTIFICATION_COMMUNICATION_INSTANT (Instant message)\n");
+        printf("                       9: AUDIO_USAGE_NOTIFICATION_COMMUNICATION_DELAYED (Delayed message)\n");
+        printf("                      10: AUDIO_USAGE_NOTIFICATION_EVENT (Event notification)\n");
+        printf("                      11: AUDIO_USAGE_ASSISTANCE_ACCESSIBILITY (Accessibility)\n");
+        printf("                      12: AUDIO_USAGE_ASSISTANCE_NAVIGATION_GUIDANCE (Navigation)\n");
+        printf("                      13: AUDIO_USAGE_ASSISTANCE_SONIFICATION (System sonification)\n");
+        printf("                      14: AUDIO_USAGE_GAME (Game audio)\n");
+        printf("                      15: AUDIO_USAGE_VIRTUAL_SOURCE (Virtual source)\n");
+        printf("                      16: AUDIO_USAGE_ASSISTANT (Assistant)\n");
+        printf("                      17: AUDIO_USAGE_CALL_ASSISTANT (Call assistant)\n");
+        printf("                      1000: AUDIO_USAGE_EMERGENCY (Emergency)\n");
+        printf("                      1001: AUDIO_USAGE_SAFETY (Safety)\n");
+        printf("                      1002: AUDIO_USAGE_VEHICLE_STATUS (Vehicle status)\n");
+        printf("                      1003: AUDIO_USAGE_ANNOUNCEMENT (Announcement)\n");
+        printf("                      1004: AUDIO_USAGE_SPEAKER_CLEANUP (Speaker cleanup)\n");
         printf("  -C{contentType}     Set content type\n");
+        printf("                       0: AUDIO_CONTENT_TYPE_UNKNOWN (Unknown content type)\n");
+        printf("                       1: AUDIO_CONTENT_TYPE_SPEECH (Speech)\n");
+        printf("                       2: AUDIO_CONTENT_TYPE_MUSIC (Music)\n");
+        printf("                       3: AUDIO_CONTENT_TYPE_MOVIE (Movie)\n");
+        printf("                       4: AUDIO_CONTENT_TYPE_SONIFICATION (Sonification)\n");
+        printf("                       1997: AUDIO_CONTENT_TYPE_ULTRASOUND (Ultrasound)\n");
         printf("  -O{outputFlag}      Set audio output flag\n");
-        printf("  -z{minFrameCount}   Set min frame count\n\n");
+        printf("                       0: AUDIO_OUTPUT_FLAG_NONE (No special output flag)\n");
+        printf("                       1: AUDIO_OUTPUT_FLAG_DIRECT (Direct audio output)\n");
+        printf("                       2: AUDIO_OUTPUT_FLAG_PRIMARY (Primary audio output)\n");
+        printf("                       4: AUDIO_OUTPUT_FLAG_FAST (Fast audio output)\n");
+        printf("                       8: AUDIO_OUTPUT_FLAG_DEEP_BUFFER (Deep buffer audio output)\n");
+        printf("                       16: AUDIO_OUTPUT_FLAG_COMPRESS_OFFLOAD (Compress offload audio output)\n");
+        printf("                       32: AUDIO_OUTPUT_FLAG_NON_BLOCKING (Non-blocking audio output)\n");
+        printf("                       64: AUDIO_OUTPUT_FLAG_HW_AV_SYNC (Hardware audio/visual sync output)\n");
+        printf("                       128: AUDIO_OUTPUT_FLAG_TTS (Text-to-speech output)\n");
+        printf("                       256: AUDIO_OUTPUT_FLAG_RAW (Raw audio output)\n");
+        printf("                       512: AUDIO_OUTPUT_FLAG_SYNC (Synchronous audio output)\n");
+        printf("                       1024: AUDIO_OUTPUT_FLAG_IEC958_NONAUDIO (IEC958 non-audio output)\n");
+        printf("                       8192: AUDIO_OUTPUT_FLAG_DIRECT_PCM (Direct PCM audio output)\n");
+        printf("                       16384: AUDIO_OUTPUT_FLAG_MMAP_NOIRQ (MMAP no IRQ audio output)\n");
+        printf("                       32768: AUDIO_OUTPUT_FLAG_VOIP_RX (VoIP receive audio output)\n");
+        printf("                       65536: AUDIO_OUTPUT_FLAG_INCALL_MUSIC (In-call music audio output)\n");
+        printf("                       131072: AUDIO_OUTPUT_FLAG_GAPLESS_OFFLOAD (Gapless offload audio output)\n");
+        printf("                       262144: AUDIO_OUTPUT_FLAG_SPATIALIZER (Spatializer audio output)\n");
+        printf("                       524288: AUDIO_OUTPUT_FLAG_ULTRASOUND (Ultrasound audio output)\n");
+        printf("                       1048576: AUDIO_OUTPUT_FLAG_BIT_PERFECT (Bit perfect audio output)\n");
+        printf("  -z{minFrameCount}   Set min frame count (default: system selected)\n\n");
+
+        printf("For more details, please refer to system/media/audio/include/system/audio-hal-enums.h\n\n");
 
         printf("General Options:\n");
         printf("  -h                  Show this help message\n\n");
 
-        // Additional help content omitted for brevity but should be included in full implementation
         printf("Examples:\n");
         printf("    Record: audio_test_client -m0 -s1 -r48000 -c2 -f1 -F1 -z480 -d10\n");
         printf("    Play:   audio_test_client -m1 -u5 -C0 -O4 -z480 /data/audio_test.wav\n");
