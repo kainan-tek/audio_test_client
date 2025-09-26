@@ -8,6 +8,7 @@
 #include <media/AudioSystem.h>
 #include <media/AudioTrack.h>
 #include <signal.h>
+#include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -107,11 +108,7 @@ public:
         static_assert(sizeof(Header) == 44, "WAV header size must be 44 bytes");
     }
 
-    ~WAVFile() {
-        if (fileStream_.is_open()) {
-            fileStream_.close();
-        }
-    }
+    ~WAVFile() { close(); }
 
     bool
     createForWriting(const std::string& filePath, uint32_t sampleRate, uint32_t numChannels, uint32_t bitsPerSample) {
@@ -170,12 +167,12 @@ public:
     }
 
     size_t writeData(const char* data, size_t size) {
-        if (!fileStream_.is_open() || !isHeaderValid_) {
+        if (!fileStream_.is_open() || !isHeaderValid_ || !data || size == 0) {
             return 0;
         }
 
         // Prevent 32-bit overflow of WAV header sizes
-        if (size > 0 && (header_.dataSize > UINT32_MAX - size)) {
+        if (header_.dataSize > UINT32_MAX - size) {
             return 0;
         }
 
@@ -383,73 +380,38 @@ public:
     virtual int32_t execute() = 0;
 
 protected:
-    // Common error handling utility
-    void logError(const char* message) {
-        printf("Error: %s\n", message);
-        ALOGE("Error: %s\n", message);
+    void logError(const char* format, ...) {
+        va_list args;
+        va_start(args, format);
+        char buffer[1024];
+        vsnprintf(buffer, sizeof(buffer), format, args);
+        printf("Error: %s\n", buffer);
+        ALOGE(format, args);
+        va_end(args);
     }
 
-    // Common warning handling utility
-    void logWarning(const char* message) {
-        printf("Warning: %s\n", message);
-        ALOGW("Warning: %s\n", message);
+    void logWarning(const char* format, ...) {
+        va_list args;
+        va_start(args, format);
+        char buffer[1024];
+        vsnprintf(buffer, sizeof(buffer), format, args);
+        printf("Warning: %s\n", buffer);
+        ALOGW(format, args);
+        va_end(args);
     }
 
-    // Common info handling utility
-    void logInfo(const char* message) {
-        printf("%s\n", message);
-        ALOGD("%s\n", message);
-    }
-};
-
-/************************** Audio Record Operation ******************************/
-class AudioRecordOperation : public AudioOperation {
-private:
-    static std::atomic<WAVFile*> g_wavFile;
-
-public:
-    explicit AudioRecordOperation(const AudioConfig& config) : AudioOperation(config) {}
-
-    int32_t execute() override {
-        // Validate parameters
-        if (!validateParameters()) {
-            return -1;
-        }
-
-        // Initialize AudioRecord
-        sp<AudioRecord> audioRecord;
-        if (!initializeAudioRecord(audioRecord)) {
-            return -1;
-        }
-
-        // Setup WAV file
-        WAVFile wavFile;
-        std::string audioFilePath;
-        if (!setupWavFile(wavFile, audioFilePath)) {
-            return -1;
-        }
-
-        // Register signal handler
-        setupSignalHandler(&wavFile);
-
-        // Start recording
-        if (!startRecording(audioRecord)) {
-            wavFile.close();
-            return -1;
-        }
-
-        // Main recording loop
-        int32_t result = recordLoop(audioRecord, wavFile, audioFilePath);
-
-        // Cleanup
-        audioRecord->stop();
-        wavFile.finalize();
-
-        return result;
+    void logInfo(const char* format, ...) {
+        va_list args;
+        va_start(args, format);
+        char buffer[1024];
+        vsnprintf(buffer, sizeof(buffer), format, args);
+        printf("%s\n", buffer);
+        ALOGD(format, args);
+        va_end(args);
     }
 
-private:
-    bool validateParameters() {
+    // Common validation function for audio parameters
+    bool validateAudioParameters() {
         if (mConfig.sampleRate <= 0) {
             logError("Invalid sample rate specified");
             return false;
@@ -469,21 +431,9 @@ private:
         return true;
     }
 
-    bool initializeAudioRecord(sp<AudioRecord>& audioRecord) {
-        if (mConfig.minFrameCount == 0) {
-            mConfig.minFrameCount = (mConfig.sampleRate / 1000) * 20; // 20ms
-        }
-
-        audio_channel_mask_t channelMask = audio_channel_in_mask_from_count(mConfig.channelCount);
-
-        // Get minimum frame count from AudioRecord
-        if (AudioRecord::getMinFrameCount(&mConfig.minFrameCount, mConfig.sampleRate, mConfig.format, channelMask) !=
-            NO_ERROR) {
-            logWarning("Cannot get min frame count, using default value");
-        }
-
-        size_t frameCount = mConfig.minFrameCount * 2;
-
+    // Common AudioRecord initialization helper
+    bool
+    initializeAudioRecordHelper(sp<AudioRecord>& audioRecord, audio_channel_mask_t channelMask, size_t frameCount) {
         AttributionSourceState attributionSource;
         attributionSource.packageName = std::string("Audio Test Client");
         attributionSource.token = sp<BBinder>::make();
@@ -492,8 +442,11 @@ private:
         memset(&attributes, 0, sizeof(attributes));
         attributes.source = mConfig.inputSource;
 
-        logInfo("Initializing AudioRecord");
-        audioRecord = new AudioRecord(attributionSource);
+        logInfo("Initialize AudioRecord, source: %d, sampleRate: %d, channelCount: %d, format: %d, channelMask: %d, "
+                "frameCount: %zu",
+                mConfig.inputSource, mConfig.sampleRate, mConfig.channelCount, mConfig.format, channelMask, frameCount);
+
+        audioRecord = sp<AudioRecord>::make(attributionSource);
         if (audioRecord->set(mConfig.inputSource, mConfig.sampleRate, mConfig.format, channelMask, frameCount, nullptr,
                              nullptr, 0, false, AUDIO_SESSION_ALLOCATE, AudioRecord::TRANSFER_SYNC, mConfig.inputFlag,
                              getuid(), getpid(), &attributes, AUDIO_PORT_HANDLE_NONE) != NO_ERROR) {
@@ -509,19 +462,125 @@ private:
         return true;
     }
 
-    bool setupWavFile(WAVFile& wavFile, std::string& audioFilePath) {
-        size_t bytesPerSample = audio_bytes_per_sample(mConfig.format);
-        audioFilePath = AudioUtils::makeRecordFilePath(mConfig.sampleRate, mConfig.channelCount, bytesPerSample * 8,
-                                                       mConfig.recordFilePath);
+    // Common AudioTrack initialization helper
+    bool initializeAudioTrackHelper(sp<AudioTrack>& audioTrack, audio_channel_mask_t channelMask, size_t frameCount) {
+        audio_attributes_t attributes;
+        memset(&attributes, 0, sizeof(attributes));
+        attributes.usage = mConfig.usage;
+        attributes.content_type = mConfig.contentType;
 
-        logInfo((std::string("Recording audio to file: ") + audioFilePath).c_str());
+        logInfo("Initialize AudioTrack, usage: %d, sampleRate: %d, channelCount: %d, format: %d, channelMask: %d, "
+                "frameCount: %zu",
+                mConfig.usage, mConfig.sampleRate, mConfig.channelCount, mConfig.format, channelMask, frameCount);
 
-        if (!wavFile.createForWriting(audioFilePath, mConfig.sampleRate, mConfig.channelCount, bytesPerSample * 8)) {
-            logError((std::string("Can't create output file ") + audioFilePath).c_str());
+        audioTrack = sp<AudioTrack>::make();
+        if (audioTrack->set(AUDIO_STREAM_DEFAULT, mConfig.sampleRate, mConfig.format, channelMask, frameCount,
+                            mConfig.outputFlag, nullptr, nullptr, 0, nullptr, false, AUDIO_SESSION_ALLOCATE,
+                            AudioTrack::TRANSFER_SYNC, nullptr, getuid(), getpid(), &attributes, false, 1.0f,
+                            AUDIO_PORT_HANDLE_NONE) != NO_ERROR) {
+            logError("Failed to set AudioTrack parameters");
+            return false;
+        }
+
+        if (audioTrack->initCheck() != NO_ERROR) {
+            logError("AudioTrack initialization check failed");
             return false;
         }
 
         return true;
+    }
+
+    // Common WAV file setup function
+    bool setupWavFileHelper(WAVFile& wavFile, bool isRecordMode) {
+        size_t bytesPerSample = audio_bytes_per_sample(mConfig.format);
+
+        if (isRecordMode) {
+            mConfig.recordFilePath = AudioUtils::makeRecordFilePath(mConfig.sampleRate, mConfig.channelCount,
+                                                                    bytesPerSample * 8, mConfig.recordFilePath);
+
+            logInfo("Recording audio to file: %s", mConfig.recordFilePath.c_str());
+
+            if (!wavFile.createForWriting(mConfig.recordFilePath, mConfig.sampleRate, mConfig.channelCount,
+                                          bytesPerSample * 8)) {
+                logError("Can't create record file %s", mConfig.recordFilePath.c_str());
+                return false;
+            }
+        } else {
+            if (mConfig.playFilePath.empty() || access(mConfig.playFilePath.c_str(), F_OK) == -1) {
+                logError("File does not exist: %s", mConfig.playFilePath.c_str());
+                return false;
+            }
+
+            // Open WAV file for reading
+            if (!wavFile.openForReading(mConfig.playFilePath)) {
+                logError("Failed to open WAV file: %s", mConfig.playFilePath.c_str());
+                return false;
+            }
+
+            mConfig.sampleRate = wavFile.getSampleRate();
+            mConfig.channelCount = wavFile.getNumChannels();
+            mConfig.format = wavFile.getAudioFormat();
+            logInfo("Playback audio file: %s, sampleRate: %d, channelCount: %d, format: %d",
+                    mConfig.playFilePath.c_str(), mConfig.sampleRate, mConfig.channelCount, mConfig.format);
+        }
+
+        return true;
+    }
+};
+
+/************************** Audio Record Operation ******************************/
+class AudioRecordOperation : public AudioOperation {
+private:
+    static std::atomic<WAVFile*> g_wavFile;
+
+public:
+    explicit AudioRecordOperation(const AudioConfig& config) : AudioOperation(config) {}
+
+    int32_t execute() override {
+        WAVFile wavFile;
+        sp<AudioRecord> audioRecord;
+
+        // Validate parameters and initialize AudioRecord/WAVFile
+        if (!setupWavFileHelper(wavFile, true) || !validateAudioParameters() || !initializeAudioRecord(audioRecord)) {
+            logError("Failed to setup WAV file or initialize AudioRecord");
+            return -1;
+        }
+
+        // Register signal handler
+        setupSignalHandler(&wavFile);
+
+        // Start recording
+        if (!startRecording(audioRecord)) {
+            wavFile.close();
+            return -1;
+        }
+
+        // Main recording loop
+        int32_t result = recordLoop(audioRecord, wavFile);
+
+        // Cleanup
+        audioRecord->stop();
+        wavFile.finalize();
+
+        return result;
+    }
+
+private:
+    bool initializeAudioRecord(sp<AudioRecord>& audioRecord) {
+        audio_channel_mask_t channelMask = audio_channel_in_mask_from_count(mConfig.channelCount);
+
+        if (AudioRecord::getMinFrameCount(&mConfig.minFrameCount, mConfig.sampleRate, mConfig.format, channelMask) !=
+            NO_ERROR) {
+            logWarning("Cannot get min frame count, using default value");
+        }
+
+        if (mConfig.minFrameCount < static_cast<size_t>((mConfig.sampleRate * 10) / 1000)) {
+            mConfig.minFrameCount = static_cast<size_t>((mConfig.sampleRate * 10) / 1000);
+            logWarning("Reset minFrameCount to %zu", mConfig.minFrameCount);
+        }
+
+        size_t frameCount = mConfig.minFrameCount * 2;
+        return initializeAudioRecordHelper(audioRecord, channelMask, frameCount);
     }
 
     void setupSignalHandler(WAVFile* wavFile) {
@@ -533,13 +592,13 @@ private:
         logInfo("Starting AudioRecord");
         status_t startResult = audioRecord->start();
         if (startResult != NO_ERROR) {
-            logError((std::string("AudioRecord start failed with status ") + std::to_string(startResult)).c_str());
+            logError("AudioRecord start failed with status %d", startResult);
             return false;
         }
         return true;
     }
 
-    int32_t recordLoop(const sp<AudioRecord>& audioRecord, WAVFile& wavFile, const std::string& audioFilePath) {
+    int32_t recordLoop(const sp<AudioRecord>& audioRecord, WAVFile& wavFile) {
         ssize_t bytesRead = 0;
         uint32_t totalBytesRead = 0;
         size_t bytesPerSample = audio_bytes_per_sample(mConfig.format);
@@ -555,9 +614,7 @@ private:
         char* buffer = bufferManager.get();
 
         if (mConfig.durationSeconds > 0) {
-            logInfo((std::string("Recording started. Recording for ") + std::to_string(mConfig.durationSeconds) +
-                     " seconds...")
-                        .c_str());
+            logInfo("Recording started. Recording for %d seconds...", mConfig.durationSeconds);
         } else {
             logInfo("Recording started. Press Ctrl+C to stop.");
         }
@@ -569,15 +626,13 @@ private:
                 ? std::min(static_cast<uint32_t>(mConfig.durationSeconds) * bytesPerSecond, MAX_AUDIO_DATA_SIZE)
                 : MAX_AUDIO_DATA_SIZE;
 
-        logInfo((std::string("Set maxBytesToRecord to ") + std::to_string(maxBytesToRecord) + " bytes").c_str());
+        logInfo("Set maxBytesToRecord to %u bytes", maxBytesToRecord);
 
         while (totalBytesRead < maxBytesToRecord) {
             // Read data from AudioRecord
             bytesRead = audioRecord->read(buffer, bufferSize);
             if (bytesRead < 0) {
-                logWarning(
-                    (std::string("AudioRecord read returned error ") + std::to_string(bytesRead) + ", retrying...")
-                        .c_str());
+                logWarning("AudioRecord read returned error %zd, retrying...", bytesRead);
                 retryCount++;
                 if (retryCount >= kMaxRetries) {
                     logError("AudioRecord read failed after maximum retries");
@@ -615,8 +670,8 @@ private:
             }
         }
 
-        logInfo((std::string("Recording finished. Recorded ") + std::to_string(totalBytesRead) + " bytes").c_str());
-        logInfo((std::string("Audio file saved to: ") + audioFilePath).c_str());
+        logInfo("Recording finished. Recorded %u bytes", totalBytesRead);
+        logInfo("Audio file saved to: %s", wavFile.getFilePath().c_str());
 
         return 0;
     }
@@ -643,27 +698,11 @@ public:
     explicit AudioPlayOperation(const AudioConfig& config) : AudioOperation(config) {}
 
     int32_t execute() override {
-        // Validate input file
-        if (mConfig.playFilePath.empty() || access(mConfig.playFilePath.c_str(), F_OK) == -1) {
-            logError((std::string("File does not exist: ") + mConfig.playFilePath).c_str());
-            return -1;
-        }
-
-        // Open WAV file for reading
         WAVFile wavFile;
-        if (!wavFile.openForReading(mConfig.playFilePath)) {
-            logError((std::string("Failed to open WAV file: ") + mConfig.playFilePath).c_str());
-            return -1;
-        }
-
-        // Get WAV file params and update config
-        if (!updateConfigFromWavFile(wavFile)) {
-            return -1;
-        }
-
-        // Initialize AudioTrack
         sp<AudioTrack> audioTrack;
-        if (!initializeAudioTrack(audioTrack)) {
+
+        if (!setupWavFileHelper(wavFile, false) || !validateAudioParameters() || !initializeAudioTrack(audioTrack)) {
+            logError("Failed to setup WAV file or initialize AudioTrack");
             return -1;
         }
 
@@ -683,77 +722,24 @@ public:
     }
 
 private:
-    bool updateConfigFromWavFile(WAVFile& wavFile) {
-        mConfig.sampleRate = wavFile.getSampleRate();
-        mConfig.channelCount = wavFile.getNumChannels();
-        mConfig.format = wavFile.getAudioFormat();
-
-        // Validate parameters
-        if (mConfig.sampleRate <= 0) {
-            logError("Invalid sample rate in WAV header");
-            return false;
-        }
-
-        if (mConfig.channelCount <= 0 || mConfig.channelCount > 32) {
-            logError("Invalid channel count in WAV header");
-            return false;
-        }
-
-        if (mConfig.format == AUDIO_FORMAT_INVALID) {
-            logError("Unsupported format in WAV header");
-            return false;
-        }
-
-        printf("Parsed WAV header params: sampleRate:%d, channelCount:%d, format:%d\n", mConfig.sampleRate,
-               mConfig.channelCount, mConfig.format);
-
-        return true;
-    }
-
     bool initializeAudioTrack(sp<AudioTrack>& audioTrack) {
-        size_t bytesPerSample = audio_bytes_per_sample(mConfig.format);
-        if (bytesPerSample == 0) {
-            logError("Invalid audio format specified");
-            return false;
-        }
-
         audio_channel_mask_t channelMask = audio_channel_out_mask_from_count(mConfig.channelCount);
 
-        if (mConfig.minFrameCount < static_cast<size_t>(mConfig.sampleRate / 1000) * 10) {
-            mConfig.minFrameCount = static_cast<size_t>(mConfig.sampleRate / 1000) * 10;
-            logWarning((std::string("Reset minFrameCount to ") + std::to_string(mConfig.minFrameCount)).c_str());
+        if (mConfig.minFrameCount < static_cast<size_t>((mConfig.sampleRate * 10) / 1000)) {
+            mConfig.minFrameCount = static_cast<size_t>((mConfig.sampleRate * 10) / 1000);
         }
 
         size_t frameCount = mConfig.minFrameCount * 2;
+        logInfo("AudioTrack minFrameCount: %zu, using frameCount: %zu", mConfig.minFrameCount, frameCount);
 
-        audio_attributes_t attributes;
-        memset(&attributes, 0, sizeof(attributes));
-        attributes.content_type = mConfig.contentType;
-        attributes.usage = mConfig.usage;
-
-        logInfo("Initializing AudioTrack");
-        audioTrack = new AudioTrack();
-        if (audioTrack->set(AUDIO_STREAM_DEFAULT, mConfig.sampleRate, mConfig.format, channelMask, frameCount,
-                            mConfig.outputFlag, nullptr, nullptr, 0, nullptr, false, AUDIO_SESSION_ALLOCATE,
-                            AudioTrack::TRANSFER_SYNC, nullptr, getuid(), getpid(), &attributes, false, 1.0f,
-                            AUDIO_PORT_HANDLE_NONE) != NO_ERROR) {
-            logError("Failed to set AudioTrack parameters");
-            return false;
-        }
-
-        if (audioTrack->initCheck() != NO_ERROR) {
-            logError("AudioTrack initialization check failed");
-            return false;
-        }
-
-        return true;
+        return initializeAudioTrackHelper(audioTrack, channelMask, frameCount);
     }
 
     bool startPlayback(const sp<AudioTrack>& audioTrack) {
         logInfo("Starting AudioTrack");
         status_t startResult = audioTrack->start();
         if (startResult != NO_ERROR) {
-            logError((std::string("AudioTrack start failed with status ") + std::to_string(startResult)).c_str());
+            logError("AudioTrack start failed with status %d", startResult);
             return false;
         }
         return true;
@@ -775,7 +761,7 @@ private:
         }
         char* buffer = bufferManager.get();
 
-        logInfo((std::string("Playback started. Playing audio from: ") + mConfig.playFilePath).c_str());
+        logInfo("Playback started. Playing audio from: %s", mConfig.playFilePath.c_str());
 
         uint32_t retryCount = 0;
         uint32_t nextProgressReport = bytesPerSecond * kProgressReportInterval;
@@ -794,9 +780,7 @@ private:
                 ssize_t written =
                     audioTrack->write(buffer + bytesWritten, bytesRead - static_cast<size_t>(bytesWritten));
                 if (written < 0) {
-                    logWarning(
-                        (std::string("AudioTrack write failed with error ") + std::to_string(written) + ", retrying...")
-                            .c_str());
+                    logWarning("AudioTrack write failed with error %zd, retrying...", written);
                     retryCount++;
                     usleep(kRetryDelayUs);
                     continue;
@@ -822,7 +806,7 @@ private:
             }
         }
 
-        logInfo((std::string("Playback finished. Total bytes played: ") + std::to_string(totalBytesPlayed)).c_str());
+        logInfo("Playback finished. Total bytes played: %u", totalBytesPlayed);
 
         return 0;
     }
@@ -837,22 +821,14 @@ public:
     explicit AudioDuplexOperation(const AudioConfig& config) : AudioOperation(config) {}
 
     int32_t execute() override {
-        // Validate parameters
-        if (!validateParameters()) {
-            return -1;
-        }
-
-        // Initialize AudioRecord and AudioTrack
+        WAVFile wavFile;
         sp<AudioRecord> audioRecord;
         sp<AudioTrack> audioTrack;
-        if (!initializeAudioComponents(audioRecord, audioTrack)) {
-            return -1;
-        }
 
-        // Setup WAV file
-        WAVFile wavFile;
-        std::string audioFilePath;
-        if (!setupWavFile(wavFile, audioFilePath)) {
+        // Validate parameters and initialize audio components
+        if (!setupWavFileHelper(wavFile, true) || !validateAudioParameters() ||
+            !initializeAudioComponents(audioRecord, audioTrack)) {
+            logError("Failed to initialize audio components or setup WAV file");
             return -1;
         }
 
@@ -866,7 +842,7 @@ public:
         }
 
         // Main duplex loop
-        int32_t result = duplexLoop(audioRecord, audioTrack, wavFile, audioFilePath);
+        int32_t result = duplexLoop(audioRecord, audioTrack, wavFile);
 
         // Cleanup
         audioRecord->stop();
@@ -877,31 +853,7 @@ public:
     }
 
 private:
-    bool validateParameters() {
-        if (mConfig.sampleRate <= 0) {
-            logError("Invalid sample rate specified");
-            return false;
-        }
-
-        if (mConfig.channelCount <= 0 || mConfig.channelCount > 32) {
-            logError("Invalid channel count specified");
-            return false;
-        }
-
-        size_t bytesPerSample = audio_bytes_per_sample(mConfig.format);
-        if (bytesPerSample == 0) {
-            logError("Invalid audio format specified");
-            return false;
-        }
-
-        return true;
-    }
-
     bool initializeAudioComponents(sp<AudioRecord>& audioRecord, sp<AudioTrack>& audioTrack) {
-        if (mConfig.minFrameCount == 0) {
-            mConfig.minFrameCount = (mConfig.sampleRate / 1000) * 20; // 20ms
-        }
-
         audio_channel_mask_t channelMaskIn = audio_channel_in_mask_from_count(mConfig.channelCount);
         audio_channel_mask_t channelMaskOut = audio_channel_out_mask_from_count(mConfig.channelCount);
 
@@ -911,80 +863,14 @@ private:
             logWarning("Cannot get min frame count, using default value");
         }
 
+        if (mConfig.minFrameCount < static_cast<size_t>((mConfig.sampleRate * 10) / 1000)) {
+            mConfig.minFrameCount = static_cast<size_t>((mConfig.sampleRate * 10) / 1000);
+        }
         size_t frameCount = mConfig.minFrameCount * 2;
 
         // Initialize AudioRecord
-        if (!initializeAudioRecord(audioRecord, channelMaskIn, frameCount)) {
-            return false;
-        }
-
-        // Initialize AudioTrack
-        if (!initializeAudioTrack(audioTrack, channelMaskOut, frameCount)) {
-            return false;
-        }
-
-        return true;
-    }
-
-    bool initializeAudioRecord(sp<AudioRecord>& audioRecord, audio_channel_mask_t channelMask, size_t frameCount) {
-        AttributionSourceState attributionSource;
-        attributionSource.packageName = std::string("Audio Test Client");
-        attributionSource.token = sp<BBinder>::make();
-
-        audio_attributes_t attributes;
-        memset(&attributes, 0, sizeof(attributes));
-        attributes.source = mConfig.inputSource;
-
-        logInfo("Initializing AudioRecord");
-        audioRecord = new AudioRecord(attributionSource);
-        if (audioRecord->set(mConfig.inputSource, mConfig.sampleRate, mConfig.format, channelMask, frameCount, nullptr,
-                             nullptr, 0, false, AUDIO_SESSION_ALLOCATE, AudioRecord::TRANSFER_SYNC, mConfig.inputFlag,
-                             getuid(), getpid(), &attributes, AUDIO_PORT_HANDLE_NONE) != NO_ERROR) {
-            logError("Failed to set AudioRecord parameters");
-            return false;
-        }
-
-        if (audioRecord->initCheck() != NO_ERROR) {
-            logError("AudioRecord initialization check failed");
-            return false;
-        }
-
-        return true;
-    }
-
-    bool initializeAudioTrack(sp<AudioTrack>& audioTrack, audio_channel_mask_t channelMask, size_t frameCount) {
-        audio_attributes_t attributes;
-        memset(&attributes, 0, sizeof(attributes));
-        attributes.content_type = mConfig.contentType;
-        attributes.usage = mConfig.usage;
-
-        logInfo("Initializing AudioTrack");
-        audioTrack = new AudioTrack();
-        if (audioTrack->set(AUDIO_STREAM_DEFAULT, mConfig.sampleRate, mConfig.format, channelMask, frameCount,
-                            mConfig.outputFlag, nullptr, nullptr, 0, nullptr, false, AUDIO_SESSION_ALLOCATE,
-                            AudioTrack::TRANSFER_SYNC, nullptr, getuid(), getpid(), &attributes, false, 1.0f,
-                            AUDIO_PORT_HANDLE_NONE) != NO_ERROR) {
-            logError("Failed to set AudioTrack parameters");
-            return false;
-        }
-
-        if (audioTrack->initCheck() != NO_ERROR) {
-            logError("AudioTrack initialization check failed");
-            return false;
-        }
-
-        return true;
-    }
-
-    bool setupWavFile(WAVFile& wavFile, std::string& audioFilePath) {
-        size_t bytesPerSample = audio_bytes_per_sample(mConfig.format);
-        audioFilePath = AudioUtils::makeRecordFilePath(mConfig.sampleRate, mConfig.channelCount, bytesPerSample * 8,
-                                                       mConfig.recordFilePath);
-
-        logInfo((std::string("Recording audio to file: ") + audioFilePath).c_str());
-
-        if (!wavFile.createForWriting(audioFilePath, mConfig.sampleRate, mConfig.channelCount, bytesPerSample * 8)) {
-            logError((std::string("Can't create output file ") + audioFilePath).c_str());
+        if (!initializeAudioRecordHelper(audioRecord, channelMaskIn, frameCount) ||
+            !initializeAudioTrackHelper(audioTrack, channelMaskOut, frameCount)) {
             return false;
         }
 
@@ -1000,15 +886,14 @@ private:
         logInfo("Starting AudioRecord");
         status_t recordStartResult = audioRecord->start();
         if (recordStartResult != NO_ERROR) {
-            logError(
-                (std::string("AudioRecord start failed with status ") + std::to_string(recordStartResult)).c_str());
+            logError("AudioRecord start failed with status %d", recordStartResult);
             return false;
         }
 
         logInfo("Starting AudioTrack");
         status_t playStartResult = audioTrack->start();
         if (playStartResult != NO_ERROR) {
-            logError((std::string("AudioTrack start failed with status ") + std::to_string(playStartResult)).c_str());
+            logError("AudioTrack start failed with status %d", playStartResult);
             audioRecord->stop();
             return false;
         }
@@ -1016,10 +901,7 @@ private:
         return true;
     }
 
-    int32_t duplexLoop(const sp<AudioRecord>& audioRecord,
-                       const sp<AudioTrack>& audioTrack,
-                       WAVFile& wavFile,
-                       const std::string& audioFilePath) {
+    int32_t duplexLoop(const sp<AudioRecord>& audioRecord, const sp<AudioTrack>& audioTrack, WAVFile& wavFile) {
         ssize_t bytesRead = 0;
         ssize_t bytesWritten = 0;
         uint32_t totalBytesRead = 0;
@@ -1036,9 +918,7 @@ private:
         char* buffer = bufferManager.get();
 
         if (mConfig.durationSeconds > 0) {
-            logInfo((std::string("Duplex audio started. Recording for ") + std::to_string(mConfig.durationSeconds) +
-                     " seconds...")
-                        .c_str());
+            logInfo("Duplex audio started. Recording for %d seconds...", mConfig.durationSeconds);
         } else {
             logInfo("Duplex audio started. Press Ctrl+C to stop.");
         }
@@ -1051,7 +931,7 @@ private:
                 ? std::min(static_cast<uint32_t>(mConfig.durationSeconds) * bytesPerSecond, MAX_AUDIO_DATA_SIZE)
                 : MAX_AUDIO_DATA_SIZE;
 
-        logInfo((std::string("Set maxBytesToRecord to ") + std::to_string(maxBytesToRecord) + " bytes").c_str());
+        logInfo("Set maxBytesToRecord to %u bytes", maxBytesToRecord);
 
         bool recording = true;
         bool playing = true;
@@ -1060,9 +940,7 @@ private:
             // Read from AudioRecord
             bytesRead = audioRecord->read(buffer, bufferSize);
             if (bytesRead < 0) {
-                logWarning(
-                    (std::string("AudioRecord read returned error ") + std::to_string(bytesRead) + ", retrying...")
-                        .c_str());
+                logWarning("AudioRecord read returned error %zd, retrying...", bytesRead);
                 recordRetryCount++;
                 if (recordRetryCount >= kMaxRetries) {
                     logError("AudioRecord read failed after maximum retries");
@@ -1114,9 +992,7 @@ private:
                 ssize_t written = audioTrack->write(buffer + bytesWritten,
                                                     static_cast<size_t>(bytesRead) - static_cast<size_t>(bytesWritten));
                 if (written < 0) {
-                    logWarning(
-                        (std::string("AudioTrack write failed with error ") + std::to_string(written) + ", retrying...")
-                            .c_str());
+                    logWarning("AudioTrack write failed with error %zd, retrying...", written);
                     playRetryCount++;
                     if (playRetryCount >= kMaxRetries) {
                         logError("AudioTrack write failed after maximum retries");
@@ -1131,8 +1007,8 @@ private:
             }
         }
 
-        logInfo((std::string("Duplex audio completed. Total bytes read: ") + std::to_string(totalBytesRead)).c_str());
-        logInfo((std::string("Recording saved to: ") + audioFilePath).c_str());
+        logInfo("Duplex audio completed. Total bytes read: %u", totalBytesRead);
+        logInfo("Recording saved to: %s", wavFile.getFilePath().c_str());
 
         return 0;
     }
