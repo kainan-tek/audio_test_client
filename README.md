@@ -3,7 +3,7 @@
 This is a simple audio test client for Android devices. It can be used to record, playback, and duplex audio (simultaneously record and play).
 
 steps to run:
-1. Build the project using mm or mmm command. Make sure you have the necessary environment
+1. Build with cmd: mm audio_test_client. Make sure you have the necessary environment
 2. Push the generated binary into the device using adb push
 3. Run the binary on the device using adb shell
 

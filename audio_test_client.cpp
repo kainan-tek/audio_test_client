@@ -30,6 +30,12 @@ static constexpr uint32_t MAX_AUDIO_DATA_SIZE = 2u * 1024u * 1024u * 1024u; // 2
 /************************** WAV File Management ******************************/
 class WAVFile {
 public:
+    WAVFile() : isHeaderValid_(false) {
+        memset(&header_, 0, sizeof(Header));
+        static_assert(sizeof(Header) == 44, "WAV header size must be 44 bytes");
+    }
+    ~WAVFile() { close(); }
+
     struct Header {
         // WAV header size is 44 bytes
         char riffID[4];         // "RIFF"
@@ -94,21 +100,6 @@ public:
             printf("DataSize: %u\n", (unsigned)dataSize);
         }
     };
-
-private:
-    Header header_;
-    std::string filePath_;
-    mutable std::fstream fileStream_;
-    bool isHeaderValid_;
-    std::streampos dataSizePos_; // Position of dataSize field for updates
-
-public:
-    WAVFile() : isHeaderValid_(false) {
-        memset(&header_, 0, sizeof(Header));
-        static_assert(sizeof(Header) == 44, "WAV header size must be 44 bytes");
-    }
-
-    ~WAVFile() { close(); }
 
     bool
     createForWriting(const std::string& filePath, uint32_t sampleRate, uint32_t numChannels, uint32_t bitsPerSample) {
@@ -231,6 +222,9 @@ public:
 
     const std::string& getFilePath() const { return filePath_; }
     const Header& getHeader() const { return header_; }
+    int32_t getSampleRate() const { return header_.sampleRate; }
+    int32_t getNumChannels() const { return header_.numChannels; }
+    uint32_t getBitsPerSample() const { return header_.bitsPerSample; }
     audio_format_t getAudioFormat() const {
         if ((header_.audioFormat == 1) && (header_.bitsPerSample == 8)) {
             return AUDIO_FORMAT_PCM_8_BIT;
@@ -247,17 +241,16 @@ public:
         }
     }
 
-    int32_t getSampleRate() const { return header_.sampleRate; }
-    int32_t getNumChannels() const { return header_.numChannels; }
-    uint32_t getBitsPerSample() const { return header_.bitsPerSample; }
+private:
+    Header header_;
+    std::string filePath_;
+    mutable std::fstream fileStream_;
+    bool isHeaderValid_;
+    std::streampos dataSizePos_; // Position of dataSize field for updates
 };
 
 /************************** BufferManager class ******************************/
 class BufferManager {
-private:
-    std::unique_ptr<char[]> buffer;
-    size_t size;
-
 public:
     BufferManager(size_t bufferSize) : size(0) {
         // Check for reasonable buffer size limits
@@ -288,6 +281,10 @@ public:
     char* get() { return buffer.get(); }
     size_t getSize() const { return size; }
     bool isValid() const { return buffer != nullptr && size > 0; }
+
+private:
+    std::unique_ptr<char[]> buffer;
+    size_t size;
 };
 
 /************************** Audio Utility Functions ******************************/
@@ -330,7 +327,7 @@ public:
         }
         char audioFile[256] = {0};
         char formatTime[32] = {0};
-        getFormatTime(formatTime);
+        AudioUtils::getFormatTime(formatTime);
         snprintf(audioFile, sizeof(audioFile), "/data/record_%dHz_%dch_%ubit_%s.wav", sampleRate, channelCount,
                  bitsPerSample, formatTime);
         return std::string(audioFile);
@@ -368,63 +365,37 @@ enum AudioMode {
 
 /************************** Audio Operation Base Class ******************************/
 class AudioOperation {
-protected:
-    AudioConfig mConfig;
-    static constexpr uint32_t kRetryDelayUs = 2000;         // 2ms delay for retry
-    static constexpr uint32_t kMaxRetries = 3;              // max retries
-    static constexpr uint32_t kProgressReportInterval = 10; // report progress every 10 seconds
-
 public:
     explicit AudioOperation(const AudioConfig& config) : mConfig(config) {}
     virtual ~AudioOperation() = default;
     virtual int32_t execute() = 0;
 
 protected:
-    void logError(const char* format, ...) {
-        va_list args;
-        va_start(args, format);
-        char buffer[1024];
-        vsnprintf(buffer, sizeof(buffer), format, args);
-        printf("Error: %s\n", buffer);
-        ALOGE(format, args);
-        va_end(args);
-    }
-
-    void logWarning(const char* format, ...) {
-        va_list args;
-        va_start(args, format);
-        char buffer[1024];
-        vsnprintf(buffer, sizeof(buffer), format, args);
-        printf("Warning: %s\n", buffer);
-        ALOGW(format, args);
-        va_end(args);
-    }
-
-    void logInfo(const char* format, ...) {
-        va_list args;
-        va_start(args, format);
-        char buffer[1024];
-        vsnprintf(buffer, sizeof(buffer), format, args);
-        printf("%s\n", buffer);
-        ALOGD(format, args);
-        va_end(args);
-    }
+    AudioConfig mConfig;
+    static constexpr uint32_t kRetryDelayUs = 2000;           // 2ms delay for retry
+    static constexpr uint32_t kMaxRetries = 3;                // max retries
+    static constexpr uint32_t kProgressReportInterval = 10;   // report progress every 10 seconds
+    static constexpr uint32_t kLevelMeterIntervalFrames = 20; // Update level meter every 20 frames
+    static constexpr int kLevelMeterScaleLength = 30;         // Length of level meter display
 
     // Common validation function for audio parameters
     bool validateAudioParameters() {
         if (mConfig.sampleRate <= 0) {
-            logError("Invalid sample rate specified");
+            printf("Error: Invalid sample rate specified\n");
+            ALOGE("Invalid sample rate specified");
             return false;
         }
 
         if (mConfig.channelCount <= 0 || mConfig.channelCount > 32) {
-            logError("Invalid channel count specified");
+            printf("Error: Invalid channel count specified\n");
+            ALOGE("Invalid channel count specified");
             return false;
         }
 
         size_t bytesPerSample = audio_bytes_per_sample(mConfig.format);
         if (bytesPerSample == 0) {
-            logError("Invalid audio format specified");
+            printf("Error: Invalid audio format specified\n");
+            ALOGE("Invalid audio format specified");
             return false;
         }
 
@@ -442,20 +413,41 @@ protected:
         memset(&attributes, 0, sizeof(attributes));
         attributes.source = mConfig.inputSource;
 
-        logInfo("Initialize AudioRecord, source: %d, sampleRate: %d, channelCount: %d, format: %d, channelMask: %d, "
-                "frameCount: %zu",
-                mConfig.inputSource, mConfig.sampleRate, mConfig.channelCount, mConfig.format, channelMask, frameCount);
+        printf("Initialize AudioRecord, source: %d, sampleRate: %d, channelCount: %d, format: %d, channelMask: %d, "
+               "frameCount: %zu\n",
+               mConfig.inputSource, mConfig.sampleRate, mConfig.channelCount, mConfig.format, channelMask, frameCount);
+        ALOGD("Initialize AudioRecord, source: %d, sampleRate: %d, channelCount: %d, format: %d, channelMask: %d, "
+              "frameCount: %zu",
+              mConfig.inputSource, mConfig.sampleRate, mConfig.channelCount, mConfig.format, channelMask, frameCount);
 
         audioRecord = sp<AudioRecord>::make(attributionSource);
-        if (audioRecord->set(mConfig.inputSource, mConfig.sampleRate, mConfig.format, channelMask, frameCount, nullptr,
-                             nullptr, 0, false, AUDIO_SESSION_ALLOCATE, AudioRecord::TRANSFER_SYNC, mConfig.inputFlag,
-                             getuid(), getpid(), &attributes, AUDIO_PORT_HANDLE_NONE) != NO_ERROR) {
-            logError("Failed to set AudioRecord parameters");
+        if (audioRecord->set(mConfig.inputSource, // input source
+                             mConfig.sampleRate,  // sample rate
+                             mConfig.format,      // audio format
+                             channelMask,         // channel mask
+                             frameCount,          // frame count
+                             nullptr,             // callback/IAudioRecordCallback. use TRANSFER_CALLBACK
+#ifndef _INTERFACE_V2_
+                             nullptr, // user mCallbackData
+#endif
+                             0,                          // notificationFrames
+                             false,                      // threadCanCallJava
+                             AUDIO_SESSION_ALLOCATE,     // sessionId
+                             AudioRecord::TRANSFER_SYNC, // transferType
+                             mConfig.inputFlag,          // inputFlag
+                             getuid(),                   // uid
+                             getpid(),                   // pid
+                             &attributes,                // audioAttributes
+                             AUDIO_PORT_HANDLE_NONE      // selectedDeviceId
+                             ) != NO_ERROR) {
+            printf("Error: Failed to set AudioRecord parameters\n");
+            ALOGE("Failed to set AudioRecord parameters");
             return false;
         }
 
         if (audioRecord->initCheck() != NO_ERROR) {
-            logError("AudioRecord initialization check failed");
+            printf("Error: AudioRecord initialization check failed\n");
+            ALOGE("AudioRecord initialization check failed");
             return false;
         }
 
@@ -464,26 +456,55 @@ protected:
 
     // Common AudioTrack initialization helper
     bool initializeAudioTrackHelper(sp<AudioTrack>& audioTrack, audio_channel_mask_t channelMask, size_t frameCount) {
+        AttributionSourceState attributionSource;
+        attributionSource.packageName = std::string("Audio Test Client");
+        attributionSource.token = sp<BBinder>::make();
+        attributionSource.uid = getuid();
+        attributionSource.pid = getpid();
+
         audio_attributes_t attributes;
         memset(&attributes, 0, sizeof(attributes));
         attributes.usage = mConfig.usage;
         attributes.content_type = mConfig.contentType;
 
-        logInfo("Initialize AudioTrack, usage: %d, sampleRate: %d, channelCount: %d, format: %d, channelMask: %d, "
-                "frameCount: %zu",
-                mConfig.usage, mConfig.sampleRate, mConfig.channelCount, mConfig.format, channelMask, frameCount);
+        printf("Initialize AudioTrack, usage: %d, sampleRate: %d, channelCount: %d, format: %d, channelMask: %d, "
+               "frameCount: %zu\n",
+               mConfig.usage, mConfig.sampleRate, mConfig.channelCount, mConfig.format, channelMask, frameCount);
+        ALOGD("Initialize AudioTrack, usage: %d, sampleRate: %d, channelCount: %d, format: %d, channelMask: %d, "
+              "frameCount: %zu",
+              mConfig.usage, mConfig.sampleRate, mConfig.channelCount, mConfig.format, channelMask, frameCount);
 
-        audioTrack = sp<AudioTrack>::make();
-        if (audioTrack->set(AUDIO_STREAM_DEFAULT, mConfig.sampleRate, mConfig.format, channelMask, frameCount,
-                            mConfig.outputFlag, nullptr, nullptr, 0, nullptr, false, AUDIO_SESSION_ALLOCATE,
-                            AudioTrack::TRANSFER_SYNC, nullptr, getuid(), getpid(), &attributes, false, 1.0f,
-                            AUDIO_PORT_HANDLE_NONE) != NO_ERROR) {
-            logError("Failed to set AudioTrack parameters");
+        audioTrack = sp<AudioTrack>::make(attributionSource);
+        if (audioTrack->set(AUDIO_STREAM_DEFAULT, // streamType
+                            mConfig.sampleRate,   // sampleRate
+                            mConfig.format,       // audioFormat
+                            channelMask,          // channelMask
+                            frameCount,           // frameCount
+                            mConfig.outputFlag,   // outputFlag
+                            nullptr,              // callback/IAudioTrackCallback. use TRANSFER_CALLBACK
+#ifndef _INTERFACE_V2_
+                            nullptr, // userCallbackData
+#endif
+                            0,                         // notificationFrames
+                            nullptr,                   // sharedBuffer, use TRANSFER_SHARED
+                            false,                     // threadCanCallJava
+                            AUDIO_SESSION_ALLOCATE,    // sessionId
+                            AudioTrack::TRANSFER_SYNC, // transferType
+                            nullptr,                   // offloadInfo
+                            attributionSource,         // attributionSource
+                            &attributes,               // pAttributes
+                            false,                     // doNotReconnect
+                            1.0f,                      // maxRequiredSpeed
+                            AUDIO_PORT_HANDLE_NONE     // selectedDeviceId
+                            ) != NO_ERROR) {
+            printf("Error: Failed to set AudioTrack parameters\n");
+            ALOGE("Failed to set AudioTrack parameters");
             return false;
         }
 
         if (audioTrack->initCheck() != NO_ERROR) {
-            logError("AudioTrack initialization check failed");
+            printf("Error: AudioTrack initialization check failed\n");
+            ALOGE("AudioTrack initialization check failed");
             return false;
         }
 
@@ -498,41 +519,119 @@ protected:
             mConfig.recordFilePath = AudioUtils::makeRecordFilePath(mConfig.sampleRate, mConfig.channelCount,
                                                                     bytesPerSample * 8, mConfig.recordFilePath);
 
-            logInfo("Recording audio to file: %s", mConfig.recordFilePath.c_str());
+            printf("Recording audio to file: %s\n", mConfig.recordFilePath.c_str());
+            ALOGD("Recording audio to file: %s", mConfig.recordFilePath.c_str());
 
             if (!wavFile.createForWriting(mConfig.recordFilePath, mConfig.sampleRate, mConfig.channelCount,
                                           bytesPerSample * 8)) {
-                logError("Can't create record file %s", mConfig.recordFilePath.c_str());
+                printf("Error: Can't create record file %s\n", mConfig.recordFilePath.c_str());
+                ALOGE("Can't create record file %s", mConfig.recordFilePath.c_str());
                 return false;
             }
         } else {
             if (mConfig.playFilePath.empty() || access(mConfig.playFilePath.c_str(), F_OK) == -1) {
-                logError("File does not exist: %s", mConfig.playFilePath.c_str());
+                printf("Error: File does not exist: %s\n", mConfig.playFilePath.c_str());
+                ALOGE("File does not exist: %s", mConfig.playFilePath.c_str());
                 return false;
             }
 
             // Open WAV file for reading
             if (!wavFile.openForReading(mConfig.playFilePath)) {
-                logError("Failed to open WAV file: %s", mConfig.playFilePath.c_str());
+                printf("Error: Failed to open WAV file: %s\n", mConfig.playFilePath.c_str());
+                ALOGE("Failed to open WAV file: %s", mConfig.playFilePath.c_str());
                 return false;
             }
 
             mConfig.sampleRate = wavFile.getSampleRate();
             mConfig.channelCount = wavFile.getNumChannels();
             mConfig.format = wavFile.getAudioFormat();
-            logInfo("Playback audio file: %s, sampleRate: %d, channelCount: %d, format: %d",
-                    mConfig.playFilePath.c_str(), mConfig.sampleRate, mConfig.channelCount, mConfig.format);
+            printf("Playback audio file: %s, sampleRate: %d, channelCount: %d, format: %d\n",
+                   mConfig.playFilePath.c_str(), mConfig.sampleRate, mConfig.channelCount, mConfig.format);
+            ALOGD("Playback audio file: %s, sampleRate: %d, channelCount: %d, format: %d", mConfig.playFilePath.c_str(),
+                  mConfig.sampleRate, mConfig.channelCount, mConfig.format);
         }
 
         return true;
+    }
+
+    // Common progress reporting function
+    bool reportProgress(uint32_t totalBytesProcessed,
+                        uint32_t bytesPerSecond,
+                        uint32_t& nextProgressReport,
+                        const char* operationType,
+                        WAVFile* wavFile = nullptr) {
+        if (totalBytesProcessed >= nextProgressReport) {
+            float secondsProcessed = static_cast<float>(totalBytesProcessed) / bytesPerSecond;
+            float mbProcessed = static_cast<float>(totalBytesProcessed) / (1024u * 1024u);
+            printf("%s ... , processed %.2f seconds, %.2f MB\n", operationType, secondsProcessed, mbProcessed);
+            // ALOGD("%s ... , processed %.2f seconds, %.2f MB", operationType, secondsProcessed, mbProcessed);
+            nextProgressReport += bytesPerSecond * kProgressReportInterval;
+
+            // Update file header if it's a recording operation and wavFile is provided
+            if (strcmp(operationType, "Recording") == 0 && wavFile != nullptr) {
+                wavFile->updateHeader();
+            }
+            return true;
+        }
+        return false;
+    }
+
+    // Simple peak level meter implementation with low CPU usage
+    void updateLevelMeter(const char* buffer, size_t bufferSize, size_t bytesPerSample) {
+        // Skip level meter updates to reduce CPU usage
+        static uint32_t frameCount = 0;
+        if (++frameCount < kLevelMeterIntervalFrames) {
+            return;
+        }
+        frameCount = 0;
+
+        // Find peak amplitude in buffer (simple and efficient method)
+        float peakAmplitude = 0.0f;
+        const int16_t* sampleData = reinterpret_cast<const int16_t*>(buffer);
+        size_t numSamples = bufferSize / bytesPerSample;
+
+        // Process 16-bit and 32-bit integer audio
+        if (bytesPerSample == 2) {
+            for (size_t i = 0; i < numSamples; ++i) {
+                float amplitude = static_cast<float>(abs(sampleData[i])) / 32768.0f; // Normalize to [0, 1]
+                if (amplitude > peakAmplitude) {
+                    peakAmplitude = amplitude;
+                }
+            }
+        } else if (bytesPerSample == 4) {
+            const int32_t* int32Data = reinterpret_cast<const int32_t*>(buffer);
+            for (size_t i = 0; i < numSamples; ++i) {
+                float amplitude = static_cast<float>(llabs(int32Data[i])) / 2147483648.0f; // Normalize to [0, 1]
+                if (amplitude > peakAmplitude) {
+                    peakAmplitude = amplitude;
+                }
+            }
+        }
+
+        // Convert to dB scale (with floor at -60dB)
+        float dbLevel = (peakAmplitude > 0.0f) ? 20.0f * log10(peakAmplitude) : -60.0f;
+        dbLevel = std::max(dbLevel, -60.0f);
+
+        // Display level meter
+        int levelLength = static_cast<int>((dbLevel + 60.0f) / 60.0f * kLevelMeterScaleLength);
+        levelLength = std::max(0, std::min(levelLength, kLevelMeterScaleLength));
+
+        // Clear previous level meter line
+        printf("\rLevel: [");
+        for (int i = 0; i < levelLength; ++i) {
+            printf("|");
+        }
+        for (int i = levelLength; i < kLevelMeterScaleLength; ++i) {
+            printf(" ");
+        }
+        printf("] %.1f dB", dbLevel);
+        fflush(stdout);
+        // ALOGI("Audio Level: %.1f dB", dbLevel);
     }
 };
 
 /************************** Audio Record Operation ******************************/
 class AudioRecordOperation : public AudioOperation {
-private:
-    static std::atomic<WAVFile*> g_wavFile;
-
 public:
     explicit AudioRecordOperation(const AudioConfig& config) : AudioOperation(config) {}
 
@@ -542,7 +641,8 @@ public:
 
         // Validate parameters and initialize AudioRecord/WAVFile
         if (!setupWavFileHelper(wavFile, true) || !validateAudioParameters() || !initializeAudioRecord(audioRecord)) {
-            logError("Failed to setup WAV file or initialize AudioRecord");
+            printf("Error: Failed to setup WAV file or initialize AudioRecord\n");
+            ALOGE("Failed to setup WAV file or initialize AudioRecord");
             return -1;
         }
 
@@ -566,17 +666,21 @@ public:
     }
 
 private:
+    static std::atomic<WAVFile*> g_wavFile;
+
     bool initializeAudioRecord(sp<AudioRecord>& audioRecord) {
         audio_channel_mask_t channelMask = audio_channel_in_mask_from_count(mConfig.channelCount);
 
         if (AudioRecord::getMinFrameCount(&mConfig.minFrameCount, mConfig.sampleRate, mConfig.format, channelMask) !=
             NO_ERROR) {
-            logWarning("Cannot get min frame count, using default value");
+            printf("Warning: Cannot get min frame count, using default value\n");
+            ALOGW("Cannot get min frame count, using default value");
         }
 
         if (mConfig.minFrameCount < static_cast<size_t>((mConfig.sampleRate * 10) / 1000)) {
             mConfig.minFrameCount = static_cast<size_t>((mConfig.sampleRate * 10) / 1000);
-            logWarning("Reset minFrameCount to %zu", mConfig.minFrameCount);
+            printf("Warning: Reset minFrameCount to %zu\n", mConfig.minFrameCount);
+            ALOGW("Reset minFrameCount to %zu", mConfig.minFrameCount);
         }
 
         size_t frameCount = mConfig.minFrameCount * 2;
@@ -589,10 +693,12 @@ private:
     }
 
     bool startRecording(const sp<AudioRecord>& audioRecord) {
-        logInfo("Starting AudioRecord");
+        printf("Starting AudioRecord\n");
+        ALOGD("Starting AudioRecord");
         status_t startResult = audioRecord->start();
         if (startResult != NO_ERROR) {
-            logError("AudioRecord start failed with status %d", startResult);
+            printf("Error: AudioRecord start failed with status %d\n", startResult);
+            ALOGE("AudioRecord start failed with status %d", startResult);
             return false;
         }
         return true;
@@ -608,15 +714,18 @@ private:
         // Setup buffer
         BufferManager bufferManager(bufferSize);
         if (!bufferManager.isValid()) {
-            logError("Failed to create valid buffer manager");
+            printf("Error: Failed to create valid buffer manager\n");
+            ALOGE("Failed to create valid buffer manager");
             return -1;
         }
         char* buffer = bufferManager.get();
 
         if (mConfig.durationSeconds > 0) {
-            logInfo("Recording started. Recording for %d seconds...", mConfig.durationSeconds);
+            printf("Recording started. Recording for %d seconds...\n", mConfig.durationSeconds);
+            ALOGD("Recording started. Recording for %d seconds...", mConfig.durationSeconds);
         } else {
-            logInfo("Recording started. Press Ctrl+C to stop.");
+            printf("Recording started. Press Ctrl+C to stop.\n");
+            ALOGD("Recording started. Press Ctrl+C to stop.");
         }
 
         uint32_t retryCount = 0;
@@ -626,16 +735,19 @@ private:
                 ? std::min(static_cast<uint32_t>(mConfig.durationSeconds) * bytesPerSecond, MAX_AUDIO_DATA_SIZE)
                 : MAX_AUDIO_DATA_SIZE;
 
-        logInfo("Set maxBytesToRecord to %u bytes", maxBytesToRecord);
+        printf("Set maxBytesToRecord to %u bytes\n", maxBytesToRecord);
+        ALOGD("Set maxBytesToRecord to %u bytes", maxBytesToRecord);
 
         while (totalBytesRead < maxBytesToRecord) {
             // Read data from AudioRecord
             bytesRead = audioRecord->read(buffer, bufferSize);
             if (bytesRead < 0) {
-                logWarning("AudioRecord read returned error %zd, retrying...", bytesRead);
+                printf("Warning: AudioRecord read returned error %zd, retrying...\n", bytesRead);
+                ALOGW("AudioRecord read returned error %zd, retrying...", bytesRead);
                 retryCount++;
                 if (retryCount >= kMaxRetries) {
-                    logError("AudioRecord read failed after maximum retries");
+                    printf("Error: AudioRecord read failed after maximum retries\n");
+                    ALOGE("AudioRecord read failed after maximum retries");
                     break;
                 }
                 usleep(kRetryDelayUs);
@@ -651,27 +763,24 @@ private:
             // Update total bytes read
             totalBytesRead += static_cast<uint32_t>(bytesRead);
 
+            // Update level meter
+            updateLevelMeter(buffer, static_cast<size_t>(bytesRead), bytesPerSample);
+
             // Write data to WAV file
             size_t bytesWritten = wavFile.writeData(buffer, static_cast<size_t>(bytesRead));
             if (bytesWritten != static_cast<size_t>(bytesRead)) {
-                logError("Failed to write to output file");
+                printf("Error: Failed to write to output file\n");
+                ALOGE("Failed to write to output file");
                 break;
             }
 
             // Report progress
-            if (totalBytesRead >= nextProgressReport) {
-                float secondsRecorded = static_cast<float>(totalBytesRead) / bytesPerSecond;
-                float mbRecorded = static_cast<float>(totalBytesRead) / (1024u * 1024u);
-                printf("Recording ... , recorded %.2f seconds, %.2f MB\n", secondsRecorded, mbRecorded);
-                nextProgressReport += bytesPerSecond * kProgressReportInterval;
-
-                // Periodically update header to ensure file validity if recording is interrupted
-                wavFile.updateHeader();
-            }
+            reportProgress(totalBytesRead, bytesPerSecond, nextProgressReport, "Recording", &wavFile);
         }
 
-        logInfo("Recording finished. Recorded %u bytes", totalBytesRead);
-        logInfo("Audio file saved to: %s", wavFile.getFilePath().c_str());
+        printf("Recording finished. Recorded %u bytes, File saved: %s\n", totalBytesRead,
+               wavFile.getFilePath().c_str());
+        ALOGD("Recording finished. Recorded %u bytes, File saved: %s", totalBytesRead, wavFile.getFilePath().c_str());
 
         return 0;
     }
@@ -702,7 +811,8 @@ public:
         sp<AudioTrack> audioTrack;
 
         if (!setupWavFileHelper(wavFile, false) || !validateAudioParameters() || !initializeAudioTrack(audioTrack)) {
-            logError("Failed to setup WAV file or initialize AudioTrack");
+            printf("Error: Failed to setup WAV file or initialize AudioTrack\n");
+            ALOGE("Failed to setup WAV file or initialize AudioTrack");
             return -1;
         }
 
@@ -730,16 +840,19 @@ private:
         }
 
         size_t frameCount = mConfig.minFrameCount * 2;
-        logInfo("AudioTrack minFrameCount: %zu, using frameCount: %zu", mConfig.minFrameCount, frameCount);
+        printf("AudioTrack minFrameCount: %zu, using frameCount: %zu\n", mConfig.minFrameCount, frameCount);
+        ALOGD("AudioTrack minFrameCount: %zu, using frameCount: %zu", mConfig.minFrameCount, frameCount);
 
         return initializeAudioTrackHelper(audioTrack, channelMask, frameCount);
     }
 
     bool startPlayback(const sp<AudioTrack>& audioTrack) {
-        logInfo("Starting AudioTrack");
+        printf("Starting AudioTrack\n");
+        ALOGD("Starting AudioTrack");
         status_t startResult = audioTrack->start();
         if (startResult != NO_ERROR) {
-            logError("AudioTrack start failed with status %d", startResult);
+            printf("Error: AudioTrack start failed with status %d\n", startResult);
+            ALOGE("AudioTrack start failed with status %d", startResult);
             return false;
         }
         return true;
@@ -756,12 +869,14 @@ private:
         // Setup buffer
         BufferManager bufferManager(bufferSize);
         if (!bufferManager.isValid()) {
-            logError("Failed to create valid buffer manager");
+            printf("Error: Failed to create valid buffer manager\n");
+            ALOGE("Failed to create valid buffer manager");
             return -1;
         }
         char* buffer = bufferManager.get();
 
-        logInfo("Playback started. Playing audio from: %s", mConfig.playFilePath.c_str());
+        printf("Playback started. Playing audio from: %s\n", mConfig.playFilePath.c_str());
+        ALOGD("Playback started. Playing audio from: %s", mConfig.playFilePath.c_str());
 
         uint32_t retryCount = 0;
         uint32_t nextProgressReport = bytesPerSecond * kProgressReportInterval;
@@ -769,7 +884,8 @@ private:
         while (true) {
             bytesRead = wavFile.readData(buffer, bufferSize);
             if (bytesRead == 0) {
-                logInfo("End of file reached");
+                printf("End of file reached\n");
+                ALOGD("End of file reached");
                 break;
             }
 
@@ -780,7 +896,8 @@ private:
                 ssize_t written =
                     audioTrack->write(buffer + bytesWritten, bytesRead - static_cast<size_t>(bytesWritten));
                 if (written < 0) {
-                    logWarning("AudioTrack write failed with error %zd, retrying...", written);
+                    printf("Warning: AudioTrack write failed with error %zd, retrying...\n", written);
+                    ALOGW("AudioTrack write failed with error %zd, retrying...", written);
                     retryCount++;
                     usleep(kRetryDelayUs);
                     continue;
@@ -790,23 +907,23 @@ private:
             }
 
             if (retryCount >= kMaxRetries) {
-                logError("AudioTrack write failed after maximum retries");
+                printf("Error: AudioTrack write failed after maximum retries\n");
+                ALOGE("AudioTrack write failed after maximum retries");
                 break;
             }
 
             // Update total bytes played
             totalBytesPlayed += static_cast<uint32_t>(bytesRead);
 
+            // Update level meter
+            updateLevelMeter(buffer, bytesRead, bytesPerSample);
+
             // Report progress
-            if (totalBytesPlayed >= nextProgressReport) {
-                float secondsPlayed = static_cast<float>(totalBytesPlayed) / bytesPerSecond;
-                float mbPlayed = static_cast<float>(totalBytesPlayed) / (1024u * 1024u);
-                printf("Playing ... , played %.2f seconds, %.2f MB\n", secondsPlayed, mbPlayed);
-                nextProgressReport += bytesPerSecond * kProgressReportInterval;
-            }
+            reportProgress(totalBytesPlayed, bytesPerSecond, nextProgressReport, "Playing");
         }
 
-        logInfo("Playback finished. Total bytes played: %u", totalBytesPlayed);
+        printf("Playback finished. Total bytes played: %u\n", totalBytesPlayed);
+        ALOGD("Playback finished. Total bytes played: %u", totalBytesPlayed);
 
         return 0;
     }
@@ -814,9 +931,6 @@ private:
 
 /************************** Audio Duplex Operation ******************************/
 class AudioDuplexOperation : public AudioOperation {
-private:
-    static std::atomic<WAVFile*> g_wavFile;
-
 public:
     explicit AudioDuplexOperation(const AudioConfig& config) : AudioOperation(config) {}
 
@@ -828,7 +942,8 @@ public:
         // Validate parameters and initialize audio components
         if (!setupWavFileHelper(wavFile, true) || !validateAudioParameters() ||
             !initializeAudioComponents(audioRecord, audioTrack)) {
-            logError("Failed to initialize audio components or setup WAV file");
+            printf("Error: Failed to initialize audio components or setup WAV file\n");
+            ALOGE("Failed to initialize audio components or setup WAV file");
             return -1;
         }
 
@@ -853,6 +968,8 @@ public:
     }
 
 private:
+    static std::atomic<WAVFile*> g_wavFile;
+
     bool initializeAudioComponents(sp<AudioRecord>& audioRecord, sp<AudioTrack>& audioTrack) {
         audio_channel_mask_t channelMaskIn = audio_channel_in_mask_from_count(mConfig.channelCount);
         audio_channel_mask_t channelMaskOut = audio_channel_out_mask_from_count(mConfig.channelCount);
@@ -860,7 +977,8 @@ private:
         // Get minimum frame count from AudioRecord
         if (AudioRecord::getMinFrameCount(&mConfig.minFrameCount, mConfig.sampleRate, mConfig.format, channelMaskIn) !=
             NO_ERROR) {
-            logWarning("Cannot get min frame count, using default value");
+            printf("Warning: Cannot get min frame count, using default value\n");
+            ALOGW("Cannot get min frame count, using default value");
         }
 
         if (mConfig.minFrameCount < static_cast<size_t>((mConfig.sampleRate * 10) / 1000)) {
@@ -883,17 +1001,21 @@ private:
     }
 
     bool startAudioComponents(const sp<AudioRecord>& audioRecord, const sp<AudioTrack>& audioTrack) {
-        logInfo("Starting AudioRecord");
+        printf("Starting AudioRecord\n");
+        ALOGD("Starting AudioRecord");
         status_t recordStartResult = audioRecord->start();
         if (recordStartResult != NO_ERROR) {
-            logError("AudioRecord start failed with status %d", recordStartResult);
+            printf("Error: AudioRecord start failed with status %d\n", recordStartResult);
+            ALOGE("AudioRecord start failed with status %d", recordStartResult);
             return false;
         }
 
-        logInfo("Starting AudioTrack");
+        printf("Starting AudioTrack\n");
+        ALOGD("Starting AudioTrack");
         status_t playStartResult = audioTrack->start();
         if (playStartResult != NO_ERROR) {
-            logError("AudioTrack start failed with status %d", playStartResult);
+            printf("Error: AudioTrack start failed with status %d\n", playStartResult);
+            ALOGE("AudioTrack start failed with status %d", playStartResult);
             audioRecord->stop();
             return false;
         }
@@ -912,15 +1034,18 @@ private:
         // Setup buffer
         BufferManager bufferManager(bufferSize);
         if (!bufferManager.isValid()) {
-            logError("Failed to create valid buffer manager");
+            printf("Error: Failed to create valid buffer manager\n");
+            ALOGE("Failed to create valid buffer manager");
             return -1;
         }
         char* buffer = bufferManager.get();
 
         if (mConfig.durationSeconds > 0) {
-            logInfo("Duplex audio started. Recording for %d seconds...", mConfig.durationSeconds);
+            printf("Duplex audio started. Recording for %d seconds...\n", mConfig.durationSeconds);
+            ALOGD("Duplex audio started. Recording for %d seconds...", mConfig.durationSeconds);
         } else {
-            logInfo("Duplex audio started. Press Ctrl+C to stop.");
+            printf("Duplex audio started. Press Ctrl+C to stop.\n");
+            ALOGD("Duplex audio started. Press Ctrl+C to stop.");
         }
 
         uint32_t recordRetryCount = 0;
@@ -931,7 +1056,8 @@ private:
                 ? std::min(static_cast<uint32_t>(mConfig.durationSeconds) * bytesPerSecond, MAX_AUDIO_DATA_SIZE)
                 : MAX_AUDIO_DATA_SIZE;
 
-        logInfo("Set maxBytesToRecord to %u bytes", maxBytesToRecord);
+        printf("Set maxBytesToRecord to %u bytes\n", maxBytesToRecord);
+        ALOGD("Set maxBytesToRecord to %u bytes", maxBytesToRecord);
 
         bool recording = true;
         bool playing = true;
@@ -940,10 +1066,12 @@ private:
             // Read from AudioRecord
             bytesRead = audioRecord->read(buffer, bufferSize);
             if (bytesRead < 0) {
-                logWarning("AudioRecord read returned error %zd, retrying...", bytesRead);
+                printf("Warning: AudioRecord read returned error %zd, retrying...\n", bytesRead);
+                ALOGW("AudioRecord read returned error %zd, retrying...", bytesRead);
                 recordRetryCount++;
                 if (recordRetryCount >= kMaxRetries) {
-                    logError("AudioRecord read failed after maximum retries");
+                    printf("Error: AudioRecord read failed after maximum retries\n");
+                    ALOGE("AudioRecord read failed after maximum retries");
                     recording = false;
                     break;
                 }
@@ -960,25 +1088,21 @@ private:
             // Update total bytes read
             totalBytesRead += static_cast<uint32_t>(bytesRead);
 
+            // Update level meter
+            updateLevelMeter(buffer, static_cast<size_t>(bytesRead), bytesPerSample);
+
             // Write to WAV file
             size_t bytesWrittenToFile = wavFile.writeData(buffer, static_cast<size_t>(bytesRead));
             if (bytesWrittenToFile != static_cast<size_t>(bytesRead)) {
-                logError("Failed to write to output file");
+                printf("Error: Failed to write to output file\n");
+                ALOGE("Failed to write to output file");
                 recording = false;
                 playing = false;
                 break;
             }
 
             // Report progress
-            if (totalBytesRead >= nextProgressReport) {
-                float secondsRecorded = static_cast<float>(totalBytesRead) / bytesPerSecond;
-                float mbRecorded = static_cast<float>(totalBytesRead) / (1024u * 1024u);
-                printf("Recording ... , recorded %.2f seconds, %.2f MB\n", secondsRecorded, mbRecorded);
-                nextProgressReport += bytesPerSecond * kProgressReportInterval;
-
-                // Periodically update header to ensure file validity if recording is interrupted
-                wavFile.updateHeader();
-            }
+            reportProgress(totalBytesRead, bytesPerSecond, nextProgressReport, "Recording", &wavFile);
 
             // Check recording finish
             if (totalBytesRead >= maxBytesToRecord) {
@@ -992,10 +1116,12 @@ private:
                 ssize_t written = audioTrack->write(buffer + bytesWritten,
                                                     static_cast<size_t>(bytesRead) - static_cast<size_t>(bytesWritten));
                 if (written < 0) {
-                    logWarning("AudioTrack write failed with error %zd, retrying...", written);
+                    printf("Warning: AudioTrack write failed with error %zd, retrying...\n", written);
+                    ALOGW("AudioTrack write failed with error %zd, retrying...", written);
                     playRetryCount++;
                     if (playRetryCount >= kMaxRetries) {
-                        logError("AudioTrack write failed after maximum retries");
+                        printf("Error: AudioTrack write failed after maximum retries\n");
+                        ALOGE("AudioTrack write failed after maximum retries");
                         playing = false;
                         break;
                     }
@@ -1007,8 +1133,10 @@ private:
             }
         }
 
-        logInfo("Duplex audio completed. Total bytes read: %u", totalBytesRead);
-        logInfo("Recording saved to: %s", wavFile.getFilePath().c_str());
+        printf("Duplex audio completed. Total bytes read: %u, File saved: %s\n", totalBytesRead,
+               wavFile.getFilePath().c_str());
+        ALOGD("Duplex audio completed. Total bytes read: %u, File saved: %s", totalBytesRead,
+              wavFile.getFilePath().c_str());
 
         return 0;
     }
@@ -1028,6 +1156,30 @@ private:
 
 // Initialize static member
 std::atomic<WAVFile*> AudioDuplexOperation::g_wavFile{nullptr};
+
+/************************** Audio Operation Factory ******************************/
+class AudioOperationFactory {
+public:
+    static std::unique_ptr<AudioOperation> createOperation(AudioMode mode, const AudioConfig& config) {
+        switch (mode) {
+        case MODE_RECORD:
+            printf("Creating RECORD operation\n");
+            return std::make_unique<AudioRecordOperation>(config);
+
+        case MODE_PLAY:
+            printf("Creating PLAY operation\n");
+            return std::make_unique<AudioPlayOperation>(config);
+
+        case MODE_DUPLEX:
+            printf("Creating DUPLEX operation\n");
+            return std::make_unique<AudioDuplexOperation>(config);
+
+        default:
+            printf("Error: Invalid mode specified: %d\n", static_cast<int>(mode));
+            return nullptr;
+        }
+    }
+};
 
 /************************** Command Line Parser ******************************/
 class CommandLineParser {
@@ -1214,27 +1366,11 @@ int32_t main(int32_t argc, char** argv) {
     // Parse command line arguments
     CommandLineParser::parseArguments(argc, argv, mode, config);
 
-    // Create and execute the appropriate audio operation
-    std::unique_ptr<AudioOperation> operation;
+    // Create the appropriate audio operation using factory
+    std::unique_ptr<AudioOperation> operation = AudioOperationFactory::createOperation(mode, config);
 
-    switch (mode) {
-    case MODE_RECORD:
-        printf("Running in RECORD mode\n");
-        operation = std::make_unique<AudioRecordOperation>(config);
-        break;
-
-    case MODE_PLAY:
-        printf("Running in PLAY mode\n");
-        operation = std::make_unique<AudioPlayOperation>(config);
-        break;
-
-    case MODE_DUPLEX:
-        printf("Running in DUPLEX mode (record and play simultaneously)\n");
-        operation = std::make_unique<AudioDuplexOperation>(config);
-        break;
-
-    default:
-        printf("Error: Invalid mode specified: %d\n", static_cast<int>(mode));
+    // Check if operation was created successfully
+    if (!operation) {
         CommandLineParser::showHelp();
         return -1;
     }
