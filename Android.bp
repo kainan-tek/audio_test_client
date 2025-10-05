@@ -1,0 +1,41 @@
+// Audio Test Client - Android Build Configuration
+// This file is the Soong build equivalent of Android.mk
+
+cc_binary {
+    name: "audio_test_client",
+    srcs: ["audio_test_client.cpp"],
+
+    // C++ standard
+    cppflags: [
+        "-std=c++17",
+        "-fexceptions",
+    ],
+
+    // Compiler flags
+    cflags: [
+        "-Wall",
+        "-Wextra",
+        "-Werror",
+        "-Wno-unused-parameter",
+        // Note: In Android.mk, -D_INTERFACE_V2_ is conditionally defined for platform versions 14, 15, and 16
+        // In Android.bp, we're defining it unconditionally to match the previous behavior
+        "-D_INTERFACE_V2_",
+    ],
+
+    // Shared library dependencies
+    shared_libs: [
+        "libutils",
+        "libcutils",
+        "liblog",
+        "libmedia",
+        "libhardware",
+        "libbinder",
+        "libaudioclient",
+    ],
+
+    // Header library dependencies
+    header_libs: [
+        "libmedia_headers",
+        "libmediametrics_headers",
+    ],
+}

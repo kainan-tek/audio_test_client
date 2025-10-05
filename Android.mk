@@ -1,7 +1,23 @@
 LOCAL_PATH := $(call my-dir)
 
-# Common flags and libraries
-common_shared_libraries := \
+#######################################
+# Audio Test Client Configuration
+#######################################
+
+# Common compiler flags
+COMMON_CFLAGS := \
+    -Wextra \
+    -Wno-unused-parameter \
+    -Wall \
+    -Werror
+
+# C++ specific flags
+COMMON_CPPFLAGS := \
+    -std=c++17 \
+    -fexceptions
+
+# Shared libraries required by the application
+COMMON_SHARED_LIBRARIES := \
     libutils \
     libcutils \
     liblog \
@@ -10,30 +26,39 @@ common_shared_libraries := \
     libbinder \
     libaudioclient
 
-common_header_libraries := \
+# Header libraries required by the application
+COMMON_HEADER_LIBRARIES := \
     libmedia_headers \
     libmediametrics_headers
 
-common_cflags := \
-    -fexceptions \
-    -Wextra \
-    -Wno-unused-parameter \
-    -Wall \
-    -Werror
+#######################################
+# Module Definition
+#######################################
 
 include $(CLEAR_VARS)
 
-# audio_test_client module
+# Module name
 LOCAL_MODULE := audio_test_client
-LOCAL_SRC_FILES := audio_test_client.cpp
-LOCAL_SHARED_LIBRARIES := $(common_shared_libraries)
-LOCAL_HEADER_LIBRARIES := $(common_header_libraries)
-LOCAL_CFLAGS := $(common_cflags)
 
-# define _INTERFACE_V2_ with android 14/15/16
-ifneq ($(filter 14 15 16, $(PLATFORM_VERSION)),)
-$(info PLATFORM_VERSION is $(PLATFORM_VERSION))
-LOCAL_CFLAGS += -D_INTERFACE_V2_
+# Source files
+LOCAL_SRC_FILES := audio_test_client.cpp
+
+# Library dependencies
+LOCAL_SHARED_LIBRARIES := $(COMMON_SHARED_LIBRARIES)
+LOCAL_HEADER_LIBRARIES := $(COMMON_HEADER_LIBRARIES)
+
+# Compiler flags
+LOCAL_CFLAGS := $(COMMON_CFLAGS)
+
+# C++ standard and specific flags
+LOCAL_CPPFLAGS := $(COMMON_CPPFLAGS)
+
+# Platform-specific definitions
+# Define _INTERFACE_V2_ for Android versions 14, 15, and 16
+ifneq ($(filter 14 15 16,$(PLATFORM_VERSION)),)
+    $(info PLATFORM_VERSION is $(PLATFORM_VERSION))
+    LOCAL_CFLAGS += -D_INTERFACE_V2_
 endif
 
+# Build as executable
 include $(BUILD_EXECUTABLE)

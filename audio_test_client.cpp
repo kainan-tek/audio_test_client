@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <atomic>
 #include <binder/Binder.h>
 #include <fcntl.h>
@@ -257,15 +258,8 @@ public:
         const size_t MAX_BUFFER_SIZE = 64 * 1024 * 1024; // 64MB max
         const size_t MIN_BUFFER_SIZE = 480;              // Minimum reasonable buffer size
 
-        if (bufferSize < MIN_BUFFER_SIZE) {
-            printf("Warning: Buffer size %zu is very small, using minimum %zu\n", bufferSize, MIN_BUFFER_SIZE);
-            bufferSize = MIN_BUFFER_SIZE;
-        }
-
-        if (bufferSize > MAX_BUFFER_SIZE) {
-            printf("Warning: Buffer size %zu is too large, limiting to %zu\n", bufferSize, MAX_BUFFER_SIZE);
-            bufferSize = MAX_BUFFER_SIZE;
-        }
+        bufferSize = std::clamp(bufferSize, MIN_BUFFER_SIZE, MAX_BUFFER_SIZE);
+        printf("Buffer size: %zu\n", bufferSize);
 
         try {
             buffer = std::make_unique<char[]>(bufferSize);
@@ -328,6 +322,7 @@ public:
         char audioFile[256] = {0};
         char formatTime[32] = {0};
         AudioUtils::getFormatTime(formatTime);
+        // 在Android系统上，/sdcard/Android/data目录通常只需要标准存储权限
         snprintf(audioFile, sizeof(audioFile), "/data/record_%dHz_%dch_%ubit_%s.wav", sampleRate, channelCount,
                  bitsPerSample, formatTime);
         return std::string(audioFile);
@@ -375,27 +370,25 @@ protected:
     static constexpr uint32_t kRetryDelayUs = 2000;           // 2ms delay for retry
     static constexpr uint32_t kMaxRetries = 3;                // max retries
     static constexpr uint32_t kProgressReportInterval = 10;   // report progress every 10 seconds
-    static constexpr uint32_t kLevelMeterIntervalFrames = 20; // Update level meter every 20 frames
-    static constexpr int kLevelMeterScaleLength = 30;         // Length of level meter display
+    static constexpr uint32_t kLevelMeterIntervalFrames = 30; // Update level meter every 30 frames
+    static constexpr uint32_t kLevelMeterScaleLength = 30;    // Length of level meter display
+    uint32_t mSkipCounter = 0;
 
     // Common validation function for audio parameters
     bool validateAudioParameters() {
         if (mConfig.sampleRate <= 0) {
             printf("Error: Invalid sample rate specified\n");
-            ALOGE("Invalid sample rate specified");
             return false;
         }
 
         if (mConfig.channelCount <= 0 || mConfig.channelCount > 32) {
             printf("Error: Invalid channel count specified\n");
-            ALOGE("Invalid channel count specified");
             return false;
         }
 
         size_t bytesPerSample = audio_bytes_per_sample(mConfig.format);
         if (bytesPerSample == 0) {
             printf("Error: Invalid audio format specified\n");
-            ALOGE("Invalid audio format specified");
             return false;
         }
 
@@ -577,23 +570,25 @@ protected:
     }
 
     // Simple peak level meter implementation with low CPU usage
-    void updateLevelMeter(const char* buffer, size_t bufferSize, size_t bytesPerSample) {
-        // Skip level meter updates to reduce CPU usage
-        static uint32_t frameCount = 0;
-        if (++frameCount < kLevelMeterIntervalFrames) {
+    void updateLevelMeter(const char* buffer, size_t size) {
+        if (++mSkipCounter % kLevelMeterIntervalFrames != 0)
+            return;
+
+        constexpr float NORM_16BIT = 32768.0f;
+        constexpr float NORM_32BIT = 2147483648.0f;
+        size_t bytesPerSample = audio_bytes_per_sample(mConfig.format);
+        if (size == 0 || bytesPerSample == 0) {
+            printf("Error: Invalid input size or bytesPerSample\n");
             return;
         }
-        frameCount = 0;
-
-        // Find peak amplitude in buffer (simple and efficient method)
-        float peakAmplitude = 0.0f;
-        const int16_t* sampleData = reinterpret_cast<const int16_t*>(buffer);
-        size_t numSamples = bufferSize / bytesPerSample;
+        size_t numSamples = size / bytesPerSample;
 
         // Process 16-bit and 32-bit integer audio
+        float peakAmplitude = 0.0f;
         if (bytesPerSample == 2) {
+            const int16_t* int16Data = reinterpret_cast<const int16_t*>(buffer);
             for (size_t i = 0; i < numSamples; ++i) {
-                float amplitude = static_cast<float>(abs(sampleData[i])) / 32768.0f; // Normalize to [0, 1]
+                float amplitude = static_cast<float>(std::abs(int16Data[i])) / NORM_16BIT;
                 if (amplitude > peakAmplitude) {
                     peakAmplitude = amplitude;
                 }
@@ -601,32 +596,38 @@ protected:
         } else if (bytesPerSample == 4) {
             const int32_t* int32Data = reinterpret_cast<const int32_t*>(buffer);
             for (size_t i = 0; i < numSamples; ++i) {
-                float amplitude = static_cast<float>(llabs(int32Data[i])) / 2147483648.0f; // Normalize to [0, 1]
+                float amplitude = static_cast<float>(std::abs(int32Data[i])) / NORM_32BIT;
                 if (amplitude > peakAmplitude) {
                     peakAmplitude = amplitude;
                 }
             }
+        } else {
+            printf("Error: Unsupported audio format\n");
+            return;
         }
 
         // Convert to dB scale (with floor at -60dB)
-        float dbLevel = (peakAmplitude > 0.0f) ? 20.0f * log10(peakAmplitude) : -60.0f;
+        float dbLevel = (peakAmplitude > 0.0f) ? 20.0f * std::log10(peakAmplitude) : -60.0f;
         dbLevel = std::max(dbLevel, -60.0f);
 
+#if 0
         // Display level meter
-        int levelLength = static_cast<int>((dbLevel + 60.0f) / 60.0f * kLevelMeterScaleLength);
-        levelLength = std::max(0, std::min(levelLength, kLevelMeterScaleLength));
+        uint32_t levelLength = static_cast<uint32_t>((dbLevel + 60.0f) / 60.0f * kLevelMeterScaleLength);
+        levelLength = std::clamp(levelLength, 0u, kLevelMeterScaleLength);
 
         // Clear previous level meter line
         printf("\rLevel: [");
-        for (int i = 0; i < levelLength; ++i) {
+        for (uint32_t i = 0; i < levelLength; ++i) {
             printf("|");
         }
-        for (int i = levelLength; i < kLevelMeterScaleLength; ++i) {
+        for (uint32_t i = levelLength; i < kLevelMeterScaleLength; ++i) {
             printf(" ");
         }
         printf("] %.1f dB", dbLevel);
         fflush(stdout);
-        // ALOGI("Audio Level: %.1f dB", dbLevel);
+#else
+        printf("Audio Level: %.1f dB\n", dbLevel);
+#endif
     }
 };
 
@@ -659,7 +660,9 @@ public:
         int32_t result = recordLoop(audioRecord, wavFile);
 
         // Cleanup
-        audioRecord->stop();
+        if (audioRecord != nullptr) {
+            audioRecord->stop();
+        }
         wavFile.finalize();
 
         return result;
@@ -764,7 +767,7 @@ private:
             totalBytesRead += static_cast<uint32_t>(bytesRead);
 
             // Update level meter
-            updateLevelMeter(buffer, static_cast<size_t>(bytesRead), bytesPerSample);
+            updateLevelMeter(buffer, static_cast<size_t>(bytesRead));
 
             // Write data to WAV file
             size_t bytesWritten = wavFile.writeData(buffer, static_cast<size_t>(bytesRead));
@@ -825,7 +828,9 @@ public:
         int32_t result = playLoop(audioTrack, wavFile);
 
         // Cleanup
-        audioTrack->stop();
+        if (audioTrack != nullptr) {
+            audioTrack->stop();
+        }
         wavFile.close();
 
         return result;
@@ -909,14 +914,14 @@ private:
             if (retryCount >= kMaxRetries) {
                 printf("Error: AudioTrack write failed after maximum retries\n");
                 ALOGE("AudioTrack write failed after maximum retries");
-                break;
+                return -1;
             }
 
             // Update total bytes played
             totalBytesPlayed += static_cast<uint32_t>(bytesRead);
 
             // Update level meter
-            updateLevelMeter(buffer, bytesRead, bytesPerSample);
+            updateLevelMeter(buffer, bytesRead);
 
             // Report progress
             reportProgress(totalBytesPlayed, bytesPerSecond, nextProgressReport, "Playing");
@@ -960,8 +965,12 @@ public:
         int32_t result = duplexLoop(audioRecord, audioTrack, wavFile);
 
         // Cleanup
-        audioRecord->stop();
-        audioTrack->stop();
+        if (audioRecord != nullptr) {
+            audioRecord->stop();
+        }
+        if (audioTrack != nullptr) {
+            audioTrack->stop();
+        }
         wavFile.finalize();
 
         return result;
@@ -1016,7 +1025,9 @@ private:
         if (playStartResult != NO_ERROR) {
             printf("Error: AudioTrack start failed with status %d\n", playStartResult);
             ALOGE("AudioTrack start failed with status %d", playStartResult);
-            audioRecord->stop();
+            if (audioRecord != nullptr) {
+                audioRecord->stop();
+            }
             return false;
         }
 
@@ -1030,6 +1041,7 @@ private:
         size_t bytesPerSample = audio_bytes_per_sample(mConfig.format);
         size_t bufferSize = (mConfig.minFrameCount * 2) * mConfig.channelCount * bytesPerSample;
         uint32_t bytesPerSecond = mConfig.sampleRate * mConfig.channelCount * bytesPerSample;
+        uint32_t bytesPerSecondPlayback = bytesPerSecond; // Same as recording in duplex mode
 
         // Setup buffer
         BufferManager bufferManager(bufferSize);
@@ -1051,6 +1063,7 @@ private:
         uint32_t recordRetryCount = 0;
         uint32_t playRetryCount = 0;
         uint32_t nextProgressReport = bytesPerSecond * kProgressReportInterval;
+        uint32_t nextPlaybackProgressReport = bytesPerSecondPlayback * kProgressReportInterval;
         uint32_t maxBytesToRecord =
             (mConfig.durationSeconds > 0)
                 ? std::min(static_cast<uint32_t>(mConfig.durationSeconds) * bytesPerSecond, MAX_AUDIO_DATA_SIZE)
@@ -1061,6 +1074,7 @@ private:
 
         bool recording = true;
         bool playing = true;
+        uint32_t totalBytesPlayed = 0;
 
         while (recording && playing && totalBytesRead < maxBytesToRecord) {
             // Read from AudioRecord
@@ -1088,8 +1102,8 @@ private:
             // Update total bytes read
             totalBytesRead += static_cast<uint32_t>(bytesRead);
 
-            // Update level meter
-            updateLevelMeter(buffer, static_cast<size_t>(bytesRead), bytesPerSample);
+            // Update level meter for recording
+            updateLevelMeter(buffer, static_cast<size_t>(bytesRead));
 
             // Write to WAV file
             size_t bytesWrittenToFile = wavFile.writeData(buffer, static_cast<size_t>(bytesRead));
@@ -1101,7 +1115,7 @@ private:
                 break;
             }
 
-            // Report progress
+            // Report progress for recording
             reportProgress(totalBytesRead, bytesPerSecond, nextProgressReport, "Recording", &wavFile);
 
             // Check recording finish
@@ -1112,9 +1126,9 @@ private:
             // Write to AudioTrack with retry logic
             bytesWritten = 0;
             playRetryCount = 0;
-            while (static_cast<size_t>(bytesWritten) < static_cast<size_t>(bytesRead) && playing) {
-                ssize_t written = audioTrack->write(buffer + bytesWritten,
-                                                    static_cast<size_t>(bytesRead) - static_cast<size_t>(bytesWritten));
+            size_t bytesToWrite = static_cast<size_t>(bytesRead);
+            while (bytesWritten < static_cast<ssize_t>(bytesToWrite) && playing) {
+                ssize_t written = audioTrack->write(buffer + bytesWritten, bytesToWrite - bytesWritten);
                 if (written < 0) {
                     printf("Warning: AudioTrack write failed with error %zd, retrying...\n", written);
                     ALOGW("AudioTrack write failed with error %zd, retrying...", written);
@@ -1130,13 +1144,16 @@ private:
                 }
                 bytesWritten += written;
                 playRetryCount = 0; // Reset retry count on successful write
+                totalBytesPlayed += static_cast<uint32_t>(written);
             }
+            // Report progress for playback
+            // reportProgress(totalBytesPlayed, bytesPerSecondPlayback, nextPlaybackProgressReport, "Playing");
         }
 
-        printf("Duplex audio completed. Total bytes read: %u, File saved: %s\n", totalBytesRead,
-               wavFile.getFilePath().c_str());
-        ALOGD("Duplex audio completed. Total bytes read: %u, File saved: %s", totalBytesRead,
-              wavFile.getFilePath().c_str());
+        printf("Duplex audio completed. Total bytes read: %u, Total bytes played: %u, File saved: %s\n", totalBytesRead,
+               totalBytesPlayed, wavFile.getFilePath().c_str());
+        ALOGD("Duplex audio completed. Total bytes read: %u, Total bytes played: %u, File saved: %s", totalBytesRead,
+              totalBytesPlayed, wavFile.getFilePath().c_str());
 
         return 0;
     }
