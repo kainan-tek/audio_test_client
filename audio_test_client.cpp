@@ -329,6 +329,10 @@ public:
     }
 };
 
+/************************** Global Variables ******************************/
+// Global exit flag for signal handling
+static std::atomic<bool> g_exitRequested(false);
+
 /************************** Audio Configuration ******************************/
 struct AudioConfig {
     // Common parameters
@@ -401,6 +405,8 @@ protected:
         AttributionSourceState attributionSource;
         attributionSource.packageName = std::string("Audio Test Client");
         attributionSource.token = sp<BBinder>::make();
+        attributionSource.uid = getuid();
+        attributionSource.pid = getpid();
 
         audio_attributes_t attributes;
         memset(&attributes, 0, sizeof(attributes));
@@ -548,9 +554,9 @@ protected:
     }
 
     // Common progress reporting function
-    bool reportProgress(uint32_t totalBytesProcessed,
-                        uint32_t bytesPerSecond,
-                        uint32_t& nextProgressReport,
+    bool reportProgress(uint64_t totalBytesProcessed,
+                        uint64_t bytesPerSecond,
+                        uint64_t& nextProgressReport,
                         const char* operationType,
                         WAVFile* wavFile = nullptr) {
         if (totalBytesProcessed >= nextProgressReport) {
@@ -569,8 +575,20 @@ protected:
         return false;
     }
 
+    // Signal handler for SIGINT (Ctrl+C)
+    static void signalHandler(int signal) {
+        if (signal == SIGINT) {
+            printf("\nReceived SIGINT (Ctrl+C), stopping...\n");
+            g_exitRequested = true;
+        }
+    }
+
+    // Setup signal handler
+    void setupSignalHandler() { signal(SIGINT, signalHandler); }
+
     // Simple peak level meter implementation with low CPU usage
     void updateLevelMeter(const char* buffer, size_t size) {
+        // Only update level meter every kLevelMeterIntervalFrames frames
         if (++mSkipCounter % kLevelMeterIntervalFrames != 0)
             return;
 
@@ -648,7 +666,7 @@ public:
         }
 
         // Register signal handler
-        setupSignalHandler(&wavFile);
+        setupSignalHandler();
 
         // Start recording
         if (!startRecording(audioRecord)) {
@@ -669,8 +687,6 @@ public:
     }
 
 private:
-    static std::atomic<WAVFile*> g_wavFile;
-
     bool initializeAudioRecord(sp<AudioRecord>& audioRecord) {
         audio_channel_mask_t channelMask = audio_channel_in_mask_from_count(mConfig.channelCount);
 
@@ -690,11 +706,6 @@ private:
         return initializeAudioRecordHelper(audioRecord, channelMask, frameCount);
     }
 
-    void setupSignalHandler(WAVFile* wavFile) {
-        g_wavFile.store(wavFile);
-        signal(SIGINT, signalHandler);
-    }
-
     bool startRecording(const sp<AudioRecord>& audioRecord) {
         printf("Starting AudioRecord\n");
         ALOGD("Starting AudioRecord");
@@ -709,10 +720,10 @@ private:
 
     int32_t recordLoop(const sp<AudioRecord>& audioRecord, WAVFile& wavFile) {
         ssize_t bytesRead = 0;
-        uint32_t totalBytesRead = 0;
+        uint64_t totalBytesRead = 0;
         size_t bytesPerSample = audio_bytes_per_sample(mConfig.format);
         size_t bufferSize = (mConfig.minFrameCount * 2) * mConfig.channelCount * bytesPerSample;
-        uint32_t bytesPerSecond = mConfig.sampleRate * mConfig.channelCount * bytesPerSample;
+        uint64_t bytesPerSecond = static_cast<uint64_t>(mConfig.sampleRate) * mConfig.channelCount * bytesPerSample;
 
         // Setup buffer
         BufferManager bufferManager(bufferSize);
@@ -732,16 +743,16 @@ private:
         }
 
         uint32_t retryCount = 0;
-        uint32_t nextProgressReport = bytesPerSecond * kProgressReportInterval;
-        uint32_t maxBytesToRecord =
-            (mConfig.durationSeconds > 0)
-                ? std::min(static_cast<uint32_t>(mConfig.durationSeconds) * bytesPerSecond, MAX_AUDIO_DATA_SIZE)
-                : MAX_AUDIO_DATA_SIZE;
+        uint64_t nextProgressReport = bytesPerSecond * kProgressReportInterval;
+        uint64_t maxBytesToRecord = (mConfig.durationSeconds > 0)
+                                        ? std::min(static_cast<uint64_t>(mConfig.durationSeconds) * bytesPerSecond,
+                                                   static_cast<uint64_t>(MAX_AUDIO_DATA_SIZE))
+                                        : static_cast<uint64_t>(MAX_AUDIO_DATA_SIZE);
 
-        printf("Set maxBytesToRecord to %u bytes\n", maxBytesToRecord);
-        ALOGD("Set maxBytesToRecord to %u bytes", maxBytesToRecord);
+        printf("Set maxBytesToRecord to %llu bytes\n", maxBytesToRecord);
+        ALOGD("Set maxBytesToRecord to %llu bytes", maxBytesToRecord);
 
-        while (totalBytesRead < maxBytesToRecord) {
+        while (totalBytesRead < maxBytesToRecord && !g_exitRequested) {
             // Read data from AudioRecord
             bytesRead = audioRecord->read(buffer, bufferSize);
             if (bytesRead < 0) {
@@ -764,7 +775,7 @@ private:
             retryCount = 0;
 
             // Update total bytes read
-            totalBytesRead += static_cast<uint32_t>(bytesRead);
+            totalBytesRead += static_cast<uint64_t>(bytesRead);
 
             // Update level meter
             updateLevelMeter(buffer, static_cast<size_t>(bytesRead));
@@ -781,28 +792,13 @@ private:
             reportProgress(totalBytesRead, bytesPerSecond, nextProgressReport, "Recording", &wavFile);
         }
 
-        printf("Recording finished. Recorded %u bytes, File saved: %s\n", totalBytesRead,
+        printf("Recording finished. Recorded %llu bytes, File saved: %s\n", totalBytesRead,
                wavFile.getFilePath().c_str());
-        ALOGD("Recording finished. Recorded %u bytes, File saved: %s", totalBytesRead, wavFile.getFilePath().c_str());
+        ALOGD("Recording finished. Recorded %llu bytes, File saved: %s", totalBytesRead, wavFile.getFilePath().c_str());
 
         return 0;
     }
-
-    // Signal handler for SIGINT (Ctrl+C)
-    static void signalHandler(int signal) {
-        if (signal == SIGINT) {
-            printf("\nReceived SIGINT (Ctrl+C), finalizing recording...\n");
-            WAVFile* wavFile = g_wavFile.exchange(nullptr);
-            if (wavFile != nullptr) {
-                wavFile->finalize(); // Finalize the WAV file
-            }
-            exit(0);
-        }
-    }
 };
-
-// Initialize static member
-std::atomic<WAVFile*> AudioRecordOperation::g_wavFile{nullptr};
 
 /************************** Audio Play Operation ******************************/
 class AudioPlayOperation : public AudioOperation {
@@ -818,6 +814,9 @@ public:
             ALOGE("Failed to setup WAV file or initialize AudioTrack");
             return -1;
         }
+
+        // Register signal handler
+        setupSignalHandler();
 
         // Start playback
         if (!startPlayback(audioTrack)) {
@@ -866,10 +865,10 @@ private:
     int32_t playLoop(const sp<AudioTrack>& audioTrack, WAVFile& wavFile) {
         size_t bytesRead = 0;
         ssize_t bytesWritten = 0;
-        uint32_t totalBytesPlayed = 0;
+        uint64_t totalBytesPlayed = 0;
         size_t bytesPerSample = audio_bytes_per_sample(mConfig.format);
         size_t bufferSize = (mConfig.minFrameCount * 2) * mConfig.channelCount * bytesPerSample;
-        uint32_t bytesPerSecond = mConfig.sampleRate * mConfig.channelCount * bytesPerSample;
+        uint64_t bytesPerSecond = static_cast<uint64_t>(mConfig.sampleRate) * mConfig.channelCount * bytesPerSample;
 
         // Setup buffer
         BufferManager bufferManager(bufferSize);
@@ -884,13 +883,18 @@ private:
         ALOGD("Playback started. Playing audio from: %s", mConfig.playFilePath.c_str());
 
         uint32_t retryCount = 0;
-        uint32_t nextProgressReport = bytesPerSecond * kProgressReportInterval;
+        uint64_t nextProgressReport = bytesPerSecond * kProgressReportInterval;
 
-        while (true) {
+        while (true && !g_exitRequested) {
             bytesRead = wavFile.readData(buffer, bufferSize);
-            if (bytesRead == 0) {
-                printf("End of file reached\n");
-                ALOGD("End of file reached");
+            if (bytesRead == 0 || g_exitRequested) {
+                if (g_exitRequested) {
+                    printf("\nPlayback stopped by user\n");
+                    ALOGD("Playback stopped by user");
+                } else {
+                    printf("End of file reached\n");
+                    ALOGD("End of file reached");
+                }
                 break;
             }
 
@@ -918,7 +922,7 @@ private:
             }
 
             // Update total bytes played
-            totalBytesPlayed += static_cast<uint32_t>(bytesRead);
+            totalBytesPlayed += static_cast<uint64_t>(bytesWritten);
 
             // Update level meter
             updateLevelMeter(buffer, bytesRead);
@@ -927,8 +931,8 @@ private:
             reportProgress(totalBytesPlayed, bytesPerSecond, nextProgressReport, "Playing");
         }
 
-        printf("Playback finished. Total bytes played: %u\n", totalBytesPlayed);
-        ALOGD("Playback finished. Total bytes played: %u", totalBytesPlayed);
+        printf("Playback finished. Total bytes played: %llu\n", totalBytesPlayed);
+        ALOGD("Playback finished. Total bytes played: %llu", totalBytesPlayed);
 
         return 0;
     }
@@ -953,7 +957,7 @@ public:
         }
 
         // Register signal handler
-        setupSignalHandler(&wavFile);
+        setupSignalHandler();
 
         // Start recording and playback
         if (!startAudioComponents(audioRecord, audioTrack)) {
@@ -977,8 +981,6 @@ public:
     }
 
 private:
-    static std::atomic<WAVFile*> g_wavFile;
-
     bool initializeAudioComponents(sp<AudioRecord>& audioRecord, sp<AudioTrack>& audioTrack) {
         audio_channel_mask_t channelMaskIn = audio_channel_in_mask_from_count(mConfig.channelCount);
         audio_channel_mask_t channelMaskOut = audio_channel_out_mask_from_count(mConfig.channelCount);
@@ -1002,11 +1004,6 @@ private:
         }
 
         return true;
-    }
-
-    void setupSignalHandler(WAVFile* wavFile) {
-        g_wavFile.store(wavFile);
-        signal(SIGINT, signalHandler);
     }
 
     bool startAudioComponents(const sp<AudioRecord>& audioRecord, const sp<AudioTrack>& audioTrack) {
@@ -1037,11 +1034,11 @@ private:
     int32_t duplexLoop(const sp<AudioRecord>& audioRecord, const sp<AudioTrack>& audioTrack, WAVFile& wavFile) {
         ssize_t bytesRead = 0;
         ssize_t bytesWritten = 0;
-        uint32_t totalBytesRead = 0;
+        uint64_t totalBytesRead = 0;
         size_t bytesPerSample = audio_bytes_per_sample(mConfig.format);
         size_t bufferSize = (mConfig.minFrameCount * 2) * mConfig.channelCount * bytesPerSample;
-        uint32_t bytesPerSecond = mConfig.sampleRate * mConfig.channelCount * bytesPerSample;
-        uint32_t bytesPerSecondPlayback = bytesPerSecond; // Same as recording in duplex mode
+        uint64_t bytesPerSecond = static_cast<uint64_t>(mConfig.sampleRate) * mConfig.channelCount * bytesPerSample;
+        uint64_t bytesPerSecondPlayback = bytesPerSecond; // Same as recording in duplex mode
 
         // Setup buffer
         BufferManager bufferManager(bufferSize);
@@ -1062,21 +1059,21 @@ private:
 
         uint32_t recordRetryCount = 0;
         uint32_t playRetryCount = 0;
-        uint32_t nextProgressReport = bytesPerSecond * kProgressReportInterval;
-        uint32_t nextPlaybackProgressReport = bytesPerSecondPlayback * kProgressReportInterval;
-        uint32_t maxBytesToRecord =
-            (mConfig.durationSeconds > 0)
-                ? std::min(static_cast<uint32_t>(mConfig.durationSeconds) * bytesPerSecond, MAX_AUDIO_DATA_SIZE)
-                : MAX_AUDIO_DATA_SIZE;
+        uint64_t nextProgressReport = bytesPerSecond * kProgressReportInterval;
+        uint64_t nextPlaybackProgressReport = bytesPerSecondPlayback * kProgressReportInterval;
+        uint64_t maxBytesToRecord = (mConfig.durationSeconds > 0)
+                                        ? std::min(static_cast<uint64_t>(mConfig.durationSeconds) * bytesPerSecond,
+                                                   static_cast<uint64_t>(MAX_AUDIO_DATA_SIZE))
+                                        : static_cast<uint64_t>(MAX_AUDIO_DATA_SIZE);
 
-        printf("Set maxBytesToRecord to %u bytes\n", maxBytesToRecord);
-        ALOGD("Set maxBytesToRecord to %u bytes", maxBytesToRecord);
+        printf("Set maxBytesToRecord to %llu bytes\n", maxBytesToRecord);
+        ALOGD("Set maxBytesToRecord to %llu bytes", maxBytesToRecord);
 
         bool recording = true;
         bool playing = true;
-        uint32_t totalBytesPlayed = 0;
+        uint64_t totalBytesPlayed = 0;
 
-        while (recording && playing && totalBytesRead < maxBytesToRecord) {
+        while (recording && playing && totalBytesRead < maxBytesToRecord && !g_exitRequested) {
             // Read from AudioRecord
             bytesRead = audioRecord->read(buffer, bufferSize);
             if (bytesRead < 0) {
@@ -1100,7 +1097,7 @@ private:
             recordRetryCount = 0;
 
             // Update total bytes read
-            totalBytesRead += static_cast<uint32_t>(bytesRead);
+            totalBytesRead += static_cast<uint64_t>(bytesRead);
 
             // Update level meter for recording
             updateLevelMeter(buffer, static_cast<size_t>(bytesRead));
@@ -1144,35 +1141,20 @@ private:
                 }
                 bytesWritten += written;
                 playRetryCount = 0; // Reset retry count on successful write
-                totalBytesPlayed += static_cast<uint32_t>(written);
+                totalBytesPlayed += static_cast<uint64_t>(written);
             }
             // Report progress for playback
             // reportProgress(totalBytesPlayed, bytesPerSecondPlayback, nextPlaybackProgressReport, "Playing");
         }
 
-        printf("Duplex audio completed. Total bytes read: %u, Total bytes played: %u, File saved: %s\n", totalBytesRead,
-               totalBytesPlayed, wavFile.getFilePath().c_str());
-        ALOGD("Duplex audio completed. Total bytes read: %u, Total bytes played: %u, File saved: %s", totalBytesRead,
-              totalBytesPlayed, wavFile.getFilePath().c_str());
+        printf("Duplex audio completed. Total bytes read: %llu, Total bytes played: %llu, File saved: %s\n",
+               totalBytesRead, totalBytesPlayed, wavFile.getFilePath().c_str());
+        ALOGD("Duplex audio completed. Total bytes read: %llu, Total bytes played: %llu, File saved: %s",
+              totalBytesRead, totalBytesPlayed, wavFile.getFilePath().c_str());
 
         return 0;
     }
-
-    // Signal handler for SIGINT (Ctrl+C)
-    static void signalHandler(int signal) {
-        if (signal == SIGINT) {
-            printf("\nReceived SIGINT (Ctrl+C), finalizing recording...\n");
-            WAVFile* wavFile = g_wavFile.exchange(nullptr);
-            if (wavFile != nullptr) {
-                wavFile->finalize(); // Finalize the WAV file
-            }
-            exit(0);
-        }
-    }
 };
-
-// Initialize static member
-std::atomic<WAVFile*> AudioDuplexOperation::g_wavFile{nullptr};
 
 /************************** Audio Operation Factory ******************************/
 class AudioOperationFactory {
