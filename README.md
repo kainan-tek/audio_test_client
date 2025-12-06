@@ -200,31 +200,31 @@ audio_test_client -m<mode> [options] [output_file]
 ### Recording
 
 ```bash
-# Record for 30 seconds with default settings
-./audio_test_client -m0 -d30
+# Record for 30 seconds at 48000 Hz, 2 channels, 16-bit, none input flag, 960 frame size, and save to auto-generated file
+./audio_test_client -m0 -s1 -r48000 -c2 -f1 -F1 -z960 -d30
 
-# Record with custom settings
-./audio_test_client -m0 -s1 -r48000 -c2 -f1 -F1 -z480 -d30 /data/recorded_audio.wav
+# Record for 30 seconds at 48000 Hz, 2 channels, 16-bit, none input flag, 960 frame size, and save to specified file
+./audio_test_client -m0 -s1 -r48000 -c2 -f1 -F1 -z960 -d30 /data/audio_test.wav
 ```
 
 ### Playback
 
 ```bash
-# Play a WAV file
-./audio_test_client -m1 /data/audio_test.wav
+# Play audio with default file
+./audio_test_client -m1 -u1 -C0 -O4 -z960
 
-# Play with custom settings
-./audio_test_client -m1 -u5 -C0 -O4 -z480 /data/audio_test.wav
+# Play audio with specified file
+./audio_test_client -m1 -u1 -C0 -O4 -z960 /data/audio_test.wav
 ```
 
 ### Duplex Mode
 
 ```bash
-# Duplex audio for 30 seconds
-./audio_test_client -m2 -s1 -r48000 -c2 -f1 -F1 -u5 -C0 -O4 -z480 -d30
+# Duplex audio for 30 seconds with auto-generated recorded file
+./audio_test_client -m2 -s1 -r48000 -c2 -f1 -F1 -u1 -C0 -O4 -z960 -d30
 
-# Duplex with custom output file
-./audio_test_client -m2 -s1 -r48000 -c2 -f1 -F1 -u5 -C0 -O4 -z480 -d30 /data/duplex_record.wav
+# Duplex audio for 30 seconds with specified recorded file
+./audio_test_client -m2 -s1 -r48000 -c2 -f1 -F1 -u1 -C0 -O4 -z960 -d30 /data/audio_test.wav
 ```
 
 ## File Management
@@ -233,7 +233,7 @@ audio_test_client -m<mode> [options] [output_file]
 
 ```bash
 # Pull recorded files from device to host
-adb pull /data/recorded_audio.wav
+adb pull /data/audio_test.wav
 ```
 
 ### Push Files for Playback

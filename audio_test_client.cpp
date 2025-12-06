@@ -25,9 +25,6 @@
 using namespace android;
 using android::content::AttributionSourceState;
 
-/* max data size for reading */
-static constexpr uint32_t MAX_AUDIO_DATA_SIZE = 2u * 1024u * 1024u * 1024u; // 2 GiB
-
 /************************** WAV File Management ******************************/
 class WAVFile {
 public:
@@ -337,15 +334,15 @@ static std::atomic<bool> g_exitRequested(false);
 struct AudioConfig {
     // Common parameters
     int32_t sampleRate = 48000;
-    int32_t channelCount = 1;
+    int32_t channelCount = 2;
     audio_format_t format = AUDIO_FORMAT_PCM_16_BIT;
-    size_t minFrameCount = 0;
+    size_t minFrameCount = 0; // will be calculated
 
     // Recording parameters
     audio_source_t inputSource = AUDIO_SOURCE_MIC;
     audio_input_flags_t inputFlag = AUDIO_INPUT_FLAG_NONE;
-    int32_t durationSeconds = 0; // 0 = unlimited
-    std::string recordFilePath = "";
+    int32_t durationSeconds = 0;     // 0 = unlimited
+    std::string recordFilePath = ""; // will be generated if empty
 
     // Playback parameters
     audio_usage_t usage = AUDIO_USAGE_MEDIA;
@@ -371,12 +368,27 @@ public:
 
 protected:
     AudioConfig mConfig;
-    static constexpr uint32_t kRetryDelayUs = 2000;           // 2ms delay for retry
-    static constexpr uint32_t kMaxRetries = 3;                // max retries
-    static constexpr uint32_t kProgressReportInterval = 10;   // report progress every 10 seconds
-    static constexpr uint32_t kLevelMeterIntervalFrames = 30; // Update level meter every 30 frames
-    static constexpr uint32_t kLevelMeterScaleLength = 30;    // Length of level meter display
+    static constexpr uint32_t kMaxAudioDataSize = 2u * 1024u * 1024u * 1024u; // 2 GiB
+    static constexpr uint32_t kRetryDelayUs = 2000;                           // 2ms delay for retry
+    static constexpr uint32_t kMaxRetries = 3;                                // max retries
+    static constexpr uint32_t kProgressReportInterval = 10;                   // report progress every 10 seconds
+    static constexpr uint32_t kLevelMeterIntervalFrames = 30;                 // Update level meter every 30 frames
+    static constexpr uint32_t kLevelMeterScaleLength = 30;                    // Length of level meter display
     uint32_t mSkipCounter = 0;
+
+    // Generic audio component start function that works with both AudioRecord and AudioTrack
+    template <typename AudioComponent>
+    bool startAudioComponent(const sp<AudioComponent>& component, const std::string& componentName) {
+        printf("Starting %s\n", componentName.c_str());
+        ALOGD("Starting %s", componentName.c_str());
+        status_t startResult = component->start();
+        if (startResult != NO_ERROR) {
+            printf("Error: %s start failed with status %d\n", componentName.c_str(), startResult);
+            ALOGE("%s start failed with status %d", componentName.c_str(), startResult);
+            return false;
+        }
+        return true;
+    }
 
     // Common validation function for audio parameters
     bool validateAudioParameters() {
@@ -399,14 +411,20 @@ protected:
         return true;
     }
 
-    // Common AudioRecord initialization helper
-    bool
-    initializeAudioRecordHelper(sp<AudioRecord>& audioRecord, audio_channel_mask_t channelMask, size_t frameCount) {
+    // Common attribution source creation helper
+    AttributionSourceState createAttributionSource() {
         AttributionSourceState attributionSource;
         attributionSource.packageName = std::string("Audio Test Client");
         attributionSource.token = sp<BBinder>::make();
         attributionSource.uid = getuid();
         attributionSource.pid = getpid();
+        return attributionSource;
+    }
+
+    // Common AudioRecord initialization helper
+    bool
+    initializeAudioRecordHelper(sp<AudioRecord>& audioRecord, audio_channel_mask_t channelMask, size_t frameCount) {
+        AttributionSourceState attributionSource = createAttributionSource();
 
         audio_attributes_t attributes;
         memset(&attributes, 0, sizeof(attributes));
@@ -455,11 +473,7 @@ protected:
 
     // Common AudioTrack initialization helper
     bool initializeAudioTrackHelper(sp<AudioTrack>& audioTrack, audio_channel_mask_t channelMask, size_t frameCount) {
-        AttributionSourceState attributionSource;
-        attributionSource.packageName = std::string("Audio Test Client");
-        attributionSource.token = sp<BBinder>::make();
-        attributionSource.uid = getuid();
-        attributionSource.pid = getpid();
+        AttributionSourceState attributionSource = createAttributionSource();
 
         audio_attributes_t attributes;
         memset(&attributes, 0, sizeof(attributes));
@@ -553,12 +567,13 @@ protected:
         return true;
     }
 
-    // Common progress reporting function
+    // Common progress reporting function for both recording and playback
     bool reportProgress(uint64_t totalBytesProcessed,
                         uint64_t bytesPerSecond,
-                        uint64_t& nextProgressReport,
                         const char* operationType,
                         WAVFile* wavFile = nullptr) {
+        static uint64_t nextProgressReport = bytesPerSecond * kProgressReportInterval;
+
         if (totalBytesProcessed >= nextProgressReport) {
             float secondsProcessed = static_cast<float>(totalBytesProcessed) / bytesPerSecond;
             float mbProcessed = static_cast<float>(totalBytesProcessed) / (1024u * 1024u);
@@ -644,7 +659,7 @@ protected:
         printf("] %.1f dB", dbLevel);
         fflush(stdout);
 #else
-        printf("Audio Level: %.1f dB\n", dbLevel);
+        printf("Audio Level: %.1f dB, bytes: %zu\n", dbLevel, size);
 #endif
     }
 };
@@ -706,17 +721,7 @@ private:
         return initializeAudioRecordHelper(audioRecord, channelMask, frameCount);
     }
 
-    bool startRecording(const sp<AudioRecord>& audioRecord) {
-        printf("Starting AudioRecord\n");
-        ALOGD("Starting AudioRecord");
-        status_t startResult = audioRecord->start();
-        if (startResult != NO_ERROR) {
-            printf("Error: AudioRecord start failed with status %d\n", startResult);
-            ALOGE("AudioRecord start failed with status %d", startResult);
-            return false;
-        }
-        return true;
-    }
+    bool startRecording(const sp<AudioRecord>& audioRecord) { return startAudioComponent(audioRecord, "AudioRecord"); }
 
     int32_t recordLoop(const sp<AudioRecord>& audioRecord, WAVFile& wavFile) {
         ssize_t bytesRead = 0;
@@ -735,22 +740,18 @@ private:
         char* buffer = bufferManager.get();
 
         if (mConfig.durationSeconds > 0) {
-            printf("Recording started. Recording for %d seconds...\n", mConfig.durationSeconds);
-            ALOGD("Recording started. Recording for %d seconds...", mConfig.durationSeconds);
+            printf("Recording for %d seconds...\n", mConfig.durationSeconds);
+            ALOGD("Recording for %d seconds...", mConfig.durationSeconds);
         } else {
             printf("Recording started. Press Ctrl+C to stop.\n");
-            ALOGD("Recording started. Press Ctrl+C to stop.");
         }
 
         uint32_t retryCount = 0;
-        uint64_t nextProgressReport = bytesPerSecond * kProgressReportInterval;
         uint64_t maxBytesToRecord = (mConfig.durationSeconds > 0)
                                         ? std::min(static_cast<uint64_t>(mConfig.durationSeconds) * bytesPerSecond,
-                                                   static_cast<uint64_t>(MAX_AUDIO_DATA_SIZE))
-                                        : static_cast<uint64_t>(MAX_AUDIO_DATA_SIZE);
-
-        printf("Set maxBytesToRecord to %llu bytes\n", maxBytesToRecord);
-        ALOGD("Set maxBytesToRecord to %llu bytes", maxBytesToRecord);
+                                                   static_cast<uint64_t>(kMaxAudioDataSize))
+                                        : static_cast<uint64_t>(kMaxAudioDataSize);
+        printf("Set maxBytesToRecord to %lu bytes\n", maxBytesToRecord);
 
         while (totalBytesRead < maxBytesToRecord && !g_exitRequested) {
             // Read data from AudioRecord
@@ -789,12 +790,12 @@ private:
             }
 
             // Report progress
-            reportProgress(totalBytesRead, bytesPerSecond, nextProgressReport, "Recording", &wavFile);
+            reportProgress(totalBytesRead, bytesPerSecond, "Recording", &wavFile);
         }
 
-        printf("Recording finished. Recorded %llu bytes, File saved: %s\n", totalBytesRead,
+        printf("Recording finished. Recorded %lu bytes, File saved: %s\n", totalBytesRead,
                wavFile.getFilePath().c_str());
-        ALOGD("Recording finished. Recorded %llu bytes, File saved: %s", totalBytesRead, wavFile.getFilePath().c_str());
+        ALOGD("Recording finished. Recorded %lu bytes, File saved: %s", totalBytesRead, wavFile.getFilePath().c_str());
 
         return 0;
     }
@@ -819,7 +820,7 @@ public:
         setupSignalHandler();
 
         // Start playback
-        if (!startPlayback(audioTrack)) {
+        if (!startPlaying(audioTrack)) {
             return -1;
         }
 
@@ -850,17 +851,7 @@ private:
         return initializeAudioTrackHelper(audioTrack, channelMask, frameCount);
     }
 
-    bool startPlayback(const sp<AudioTrack>& audioTrack) {
-        printf("Starting AudioTrack\n");
-        ALOGD("Starting AudioTrack");
-        status_t startResult = audioTrack->start();
-        if (startResult != NO_ERROR) {
-            printf("Error: AudioTrack start failed with status %d\n", startResult);
-            ALOGE("AudioTrack start failed with status %d", startResult);
-            return false;
-        }
-        return true;
-    }
+    bool startPlaying(const sp<AudioTrack>& audioTrack) { return startAudioComponent(audioTrack, "AudioTrack"); }
 
     int32_t playLoop(const sp<AudioTrack>& audioTrack, WAVFile& wavFile) {
         size_t bytesRead = 0;
@@ -879,22 +870,14 @@ private:
         }
         char* buffer = bufferManager.get();
 
-        printf("Playback started. Playing audio from: %s\n", mConfig.playFilePath.c_str());
-        ALOGD("Playback started. Playing audio from: %s", mConfig.playFilePath.c_str());
+        printf("Playing audio from: %s\n", mConfig.playFilePath.c_str());
+        ALOGD("Playing audio from: %s", mConfig.playFilePath.c_str());
 
         uint32_t retryCount = 0;
-        uint64_t nextProgressReport = bytesPerSecond * kProgressReportInterval;
-
         while (true && !g_exitRequested) {
             bytesRead = wavFile.readData(buffer, bufferSize);
-            if (bytesRead == 0 || g_exitRequested) {
-                if (g_exitRequested) {
-                    printf("\nPlayback stopped by user\n");
-                    ALOGD("Playback stopped by user");
-                } else {
-                    printf("End of file reached\n");
-                    ALOGD("End of file reached");
-                }
+            if (bytesRead == 0) {
+                printf("End of file reached\n");
                 break;
             }
 
@@ -928,11 +911,11 @@ private:
             updateLevelMeter(buffer, bytesRead);
 
             // Report progress
-            reportProgress(totalBytesPlayed, bytesPerSecond, nextProgressReport, "Playing");
+            reportProgress(totalBytesPlayed, bytesPerSecond, "Playing");
         }
 
-        printf("Playback finished. Total bytes played: %llu\n", totalBytesPlayed);
-        ALOGD("Playback finished. Total bytes played: %llu", totalBytesPlayed);
+        printf("Playback finished. Total bytes played: %lu\n", totalBytesPlayed);
+        ALOGD("Playback finished. Total bytes played: %lu", totalBytesPlayed);
 
         return 0;
     }
@@ -1007,21 +990,11 @@ private:
     }
 
     bool startAudioComponents(const sp<AudioRecord>& audioRecord, const sp<AudioTrack>& audioTrack) {
-        printf("Starting AudioRecord\n");
-        ALOGD("Starting AudioRecord");
-        status_t recordStartResult = audioRecord->start();
-        if (recordStartResult != NO_ERROR) {
-            printf("Error: AudioRecord start failed with status %d\n", recordStartResult);
-            ALOGE("AudioRecord start failed with status %d", recordStartResult);
+        if (!startAudioComponent(audioRecord, "AudioRecord")) {
             return false;
         }
 
-        printf("Starting AudioTrack\n");
-        ALOGD("Starting AudioTrack");
-        status_t playStartResult = audioTrack->start();
-        if (playStartResult != NO_ERROR) {
-            printf("Error: AudioTrack start failed with status %d\n", playStartResult);
-            ALOGE("AudioTrack start failed with status %d", playStartResult);
+        if (!startAudioComponent(audioTrack, "AudioTrack")) {
             if (audioRecord != nullptr) {
                 audioRecord->stop();
             }
@@ -1038,7 +1011,6 @@ private:
         size_t bytesPerSample = audio_bytes_per_sample(mConfig.format);
         size_t bufferSize = (mConfig.minFrameCount * 2) * mConfig.channelCount * bytesPerSample;
         uint64_t bytesPerSecond = static_cast<uint64_t>(mConfig.sampleRate) * mConfig.channelCount * bytesPerSample;
-        uint64_t bytesPerSecondPlayback = bytesPerSecond; // Same as recording in duplex mode
 
         // Setup buffer
         BufferManager bufferManager(bufferSize);
@@ -1054,25 +1026,19 @@ private:
             ALOGD("Duplex audio started. Recording for %d seconds...", mConfig.durationSeconds);
         } else {
             printf("Duplex audio started. Press Ctrl+C to stop.\n");
-            ALOGD("Duplex audio started. Press Ctrl+C to stop.");
         }
 
         uint32_t recordRetryCount = 0;
         uint32_t playRetryCount = 0;
-        uint64_t nextProgressReport = bytesPerSecond * kProgressReportInterval;
-        uint64_t nextPlaybackProgressReport = bytesPerSecondPlayback * kProgressReportInterval;
         uint64_t maxBytesToRecord = (mConfig.durationSeconds > 0)
                                         ? std::min(static_cast<uint64_t>(mConfig.durationSeconds) * bytesPerSecond,
-                                                   static_cast<uint64_t>(MAX_AUDIO_DATA_SIZE))
-                                        : static_cast<uint64_t>(MAX_AUDIO_DATA_SIZE);
-
-        printf("Set maxBytesToRecord to %llu bytes\n", maxBytesToRecord);
-        ALOGD("Set maxBytesToRecord to %llu bytes", maxBytesToRecord);
+                                                   static_cast<uint64_t>(kMaxAudioDataSize))
+                                        : static_cast<uint64_t>(kMaxAudioDataSize);
+        printf("Set maxBytesToRecord to %lu bytes\n", maxBytesToRecord);
 
         bool recording = true;
         bool playing = true;
         uint64_t totalBytesPlayed = 0;
-
         while (recording && playing && totalBytesRead < maxBytesToRecord && !g_exitRequested) {
             // Read from AudioRecord
             bytesRead = audioRecord->read(buffer, bufferSize);
@@ -1113,7 +1079,7 @@ private:
             }
 
             // Report progress for recording
-            reportProgress(totalBytesRead, bytesPerSecond, nextProgressReport, "Recording", &wavFile);
+            reportProgress(totalBytesRead, bytesPerSecond, "Recording", &wavFile);
 
             // Check recording finish
             if (totalBytesRead >= maxBytesToRecord) {
@@ -1144,13 +1110,13 @@ private:
                 totalBytesPlayed += static_cast<uint64_t>(written);
             }
             // Report progress for playback
-            // reportProgress(totalBytesPlayed, bytesPerSecondPlayback, nextPlaybackProgressReport, "Playing");
+            // reportProgress(totalBytesPlayed, bytesPerSecond, "Playing");
         }
 
-        printf("Duplex audio completed. Total bytes read: %llu, Total bytes played: %llu, File saved: %s\n",
+        printf("Duplex audio completed. Total bytes read: %lu, Total bytes played: %lu, File saved: %s\n",
                totalBytesRead, totalBytesPlayed, wavFile.getFilePath().c_str());
-        ALOGD("Duplex audio completed. Total bytes read: %llu, Total bytes played: %llu, File saved: %s",
-              totalBytesRead, totalBytesPlayed, wavFile.getFilePath().c_str());
+        ALOGD("Duplex audio completed. Total bytes read: %lu, Total bytes played: %lu, File saved: %s", totalBytesRead,
+              totalBytesPlayed, wavFile.getFilePath().c_str());
 
         return 0;
     }
@@ -1351,9 +1317,9 @@ public:
         printf("  -h                  Show this help message\n\n");
 
         printf("Examples:\n");
-        printf("    Record: audio_test_client -m0 -s1 -r48000 -c2 -f1 -F1 -z480 -d10\n");
-        printf("    Play:   audio_test_client -m1 -u5 -C0 -O4 -z480 /data/audio_test.wav\n");
-        printf("    Duplex: audio_test_client -m2 -s1 -r48000 -c2 -f1 -F1 -u5 -C0 -O4 -z480 -d30\n");
+        printf("    Record: audio_test_client -m0 -s1 -r48000 -c2 -f1 -F1 -z960 -d10\n");
+        printf("    Play:   audio_test_client -m1 -u1 -C0 -O4 -z960 /data/audio_test.wav\n");
+        printf("    Duplex: audio_test_client -m2 -s1 -r48000 -c2 -f1 -F1 -u1 -C0 -O4 -z960 -d30\n");
     }
 };
 
