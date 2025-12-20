@@ -1,13 +1,9 @@
 #include <algorithm>
 #include <atomic>
-#include <binder/Binder.h>
 #include <fcntl.h>
 #include <fstream>
 #include <getopt.h>
 #include <iostream>
-#include <media/AudioRecord.h>
-#include <media/AudioSystem.h>
-#include <media/AudioTrack.h>
 #include <signal.h>
 #include <stdarg.h>
 #include <stdint.h>
@@ -18,9 +14,19 @@
 #include <sys/types.h>
 #include <time.h>
 #include <unistd.h>
+
+#include <binder/Binder.h>
+#include <media/AudioParameter.h>
+#include <media/AudioRecord.h>
+#include <media/AudioSystem.h>
+#include <media/AudioTrack.h>
 #include <utils/Log.h>
+#include <utils/String8.h>
 
 #define LOG_TAG "audio_test_client"
+
+#define AUDIO_TEST_CLIENT_VERSION "2.0.0"
+#define SET_PARAMS_ENABLE 1
 
 using namespace android;
 using android::content::AttributionSourceState;
@@ -376,11 +382,83 @@ protected:
     static constexpr uint32_t kLevelMeterScaleLength = 30;                    // Length of level meter display
     uint32_t mSkipCounter = 0;
 
+    // Helper function to convert audio_usage_t enum to string
+    String8 audioUsageToString(audio_usage_t usage) {
+        switch (usage) {
+        case AUDIO_USAGE_UNKNOWN:
+            return String8("0:AUDIO_USAGE_UNKNOWN");
+        case AUDIO_USAGE_MEDIA:
+            return String8("0:AUDIO_USAGE_MEDIA");
+        case AUDIO_USAGE_VOICE_COMMUNICATION:
+            return String8("0:AUDIO_USAGE_VOICE_COMMUNICATION");
+        case AUDIO_USAGE_VOICE_COMMUNICATION_SIGNALLING:
+            return String8("0:AUDIO_USAGE_VOICE_COMMUNICATION_SIGNALLING");
+        case AUDIO_USAGE_ALARM:
+            return String8("0:AUDIO_USAGE_ALARM");
+        case AUDIO_USAGE_NOTIFICATION:
+            return String8("0:AUDIO_USAGE_NOTIFICATION");
+        case AUDIO_USAGE_NOTIFICATION_TELEPHONY_RINGTONE:
+            return String8("0:AUDIO_USAGE_NOTIFICATION_TELEPHONY_RINGTONE");
+        case AUDIO_USAGE_NOTIFICATION_COMMUNICATION_REQUEST:
+            return String8("0:AUDIO_USAGE_NOTIFICATION_COMMUNICATION_REQUEST");
+        case AUDIO_USAGE_NOTIFICATION_COMMUNICATION_INSTANT:
+            return String8("0:AUDIO_USAGE_NOTIFICATION_COMMUNICATION_INSTANT");
+        case AUDIO_USAGE_NOTIFICATION_COMMUNICATION_DELAYED:
+            return String8("0:AUDIO_USAGE_NOTIFICATION_COMMUNICATION_DELAYED");
+        case AUDIO_USAGE_NOTIFICATION_EVENT:
+            return String8("0:AUDIO_USAGE_NOTIFICATION_EVENT");
+        case AUDIO_USAGE_ASSISTANCE_ACCESSIBILITY:
+            return String8("0:AUDIO_USAGE_ASSISTANCE_ACCESSIBILITY");
+        case AUDIO_USAGE_ASSISTANCE_NAVIGATION_GUIDANCE:
+            return String8("0:AUDIO_USAGE_ASSISTANCE_NAVIGATION_GUIDANCE");
+        case AUDIO_USAGE_ASSISTANCE_SONIFICATION:
+            return String8("0:AUDIO_USAGE_ASSISTANCE_SONIFICATION");
+        case AUDIO_USAGE_GAME:
+            return String8("0:AUDIO_USAGE_GAME");
+        case AUDIO_USAGE_ASSISTANT:
+            return String8("0:AUDIO_USAGE_ASSISTANT");
+        default:
+            return String8("0:AUDIO_USAGE_UNKNOWN");
+        }
+    }
+
+    // Set audio parameters before starting AudioTrack
+    void setAudioParametersBeforeStart() {
+#if SET_PARAMS_ENABLE
+        AudioParameter audioParam;
+        String8 usageStr = audioUsageToString(mConfig.usage);
+        audioParam.add(String8("open_source"), usageStr);
+        String8 paramString = audioParam.toString();
+        AudioSystem::setParameters(paramString);
+        printf("Set audio parameters before start: %s\n", paramString.c_str());
+        ALOGD("Set audio parameters before start: %s", paramString.c_str());
+#endif
+    }
+
+    // Set audio parameters after stopping AudioTrack
+    void setAudioParametersAfterStop() {
+#if SET_PARAMS_ENABLE
+        AudioParameter audioParam;
+        String8 usageStr = audioUsageToString(mConfig.usage);
+        audioParam.add(String8("close_source"), usageStr);
+        String8 paramString = audioParam.toString();
+        AudioSystem::setParameters(paramString);
+        printf("Set audio parameters after stop: %s\n", paramString.c_str());
+        ALOGD("Set audio parameters after stop: %s", paramString.c_str());
+#endif
+    }
+
     // Generic audio component start function that works with both AudioRecord and AudioTrack
     template <typename AudioComponent>
     bool startAudioComponent(const sp<AudioComponent>& component, const std::string& componentName) {
         printf("Starting %s\n", componentName.c_str());
         ALOGD("Starting %s", componentName.c_str());
+
+        // set params before AudioTrack.start()
+        if (componentName == "AudioTrack") {
+            setAudioParametersBeforeStart();
+        }
+
         status_t startResult = component->start();
         if (startResult != NO_ERROR) {
             printf("Error: %s start failed with status %d\n", componentName.c_str(), startResult);
@@ -830,6 +908,8 @@ public:
         // Cleanup
         if (audioTrack != nullptr) {
             audioTrack->stop();
+            // set params after AudioTrack.stop()
+            setAudioParametersAfterStop();
         }
         wavFile.close();
 
@@ -957,6 +1037,8 @@ public:
         }
         if (audioTrack != nullptr) {
             audioTrack->stop();
+            // set params after AudioTrack.stop()
+            setAudioParametersAfterStop();
         }
         wavFile.finalize();
 
@@ -1328,6 +1410,7 @@ int32_t main(int32_t argc, char** argv) {
     AudioMode mode = MODE_INVALID;
     AudioConfig config;
 
+    printf("Audio Test Client %s Start...\n", AUDIO_TEST_CLIENT_VERSION);
     // Parse command line arguments
     CommandLineParser::parseArguments(argc, argv, mode, config);
 

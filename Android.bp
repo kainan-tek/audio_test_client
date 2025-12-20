@@ -31,11 +31,13 @@ cc_binary {
         "libhardware",
         "libbinder",
         "libaudioclient",
+        "libmedia_helper",
     ],
 
     // Header library dependencies
     header_libs: [
         "libmedia_headers",
         "libmediametrics_headers",
+        "libmedia_helper_headers",
     ],
 }

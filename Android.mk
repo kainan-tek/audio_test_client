@@ -24,12 +24,14 @@ COMMON_SHARED_LIBRARIES := \
     libmedia \
     libhardware \
     libbinder \
-    libaudioclient
+    libaudioclient \
+    libmedia_helper
 
 # Header libraries required by the application
 COMMON_HEADER_LIBRARIES := \
     libmedia_headers \
-    libmediametrics_headers
+    libmediametrics_headers \
+    libmedia_helper_headers
 
 #######################################
 # Module Definition
