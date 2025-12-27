@@ -1,271 +1,183 @@
 # Audio Test Client
 
-A powerful and flexible audio testing tool for Android devices, supporting recording, playback, and duplex audio operations.
+Android 音频录制/播放测试工具，支持三种工作模式。
 
-## Features
+**版本:** 2.0.0
 
-- **Audio Recording**: Record audio from various sources with configurable parameters
-- **Audio Playback**: Play back WAV files with flexible settings
-- **Duplex Audio**: Simultaneously record and play audio for loopback testing
-- **Configurable Parameters**: Support for custom sample rates, channel counts, and audio formats
-- **Real-time Level Meter**: Display audio levels during recording and playback
-- **Signal Handling**: Safe termination with Ctrl+C, ensuring proper resource cleanup
-- **Comprehensive Error Handling**: Detailed error messages and logging
+## 功能特性
 
-## Prerequisites
+| 模式 | 参数 | 说明 |
+|-----|------|------|
+| 录音 | `-m0` | 从指定音频源录制到 WAV 文件 |
+| 播放 | `-m1` | 播放 WAV 音频文件 |
+| 双工 | `-m2` | 同时录音和播放（回环测试） |
 
-- Android device with root access
-- Android build environment set up
-- ADB tools installed on your development machine
-
-## Build and Installation
-
-### Build the Binary
+## 快速开始
 
 ```bash
-# Build the project using Android build system
+# 编译
 mm audio_test_client
-```
 
-### Install on Device
-
-```bash
-# Push the binary to the device
+# 推送到设备
 adb push audio_test_client /data/
-
-# Set executable permissions
 adb shell chmod 777 /data/audio_test_client
 
-# Optional: Disable SELinux enforcement if needed
-adb shell setenforce 0
+# 录音示例
+adb shell /data/audio_test_client -m0 -s1 -r48000 -c2 -f1 -F1 -z960 -d20
+
+# 播放示例
+adb shell /data/audio_test_client -m1 -u1 -C0 -O4 -z960 /data/audio_test.wav
+
+# 双工示例
+adb shell /data/audio_test_client -m2 -s1 -r48000 -c2 -f1 -F1 -u1 -C0 -O4 -z960 -z960 -d20
 ```
 
-## Usage
+## 命令行参数
 
-### Command Line Syntax
-
-```bash
-audio_test_client -m<mode> [options] [output_file]
+```
+audio_test_client -m<mode> [options] [audio_file]
 ```
 
-### Modes
+### 核心参数
 
-| Mode | Description |
-|------|-------------|
-| `-m0` | Record mode |
-| `-m1` | Playback mode |
-| `-m2` | Duplex mode (simultaneous record and play) |
+| 参数 | 说明 | 默认值 |
+|-----|------|-------|
+| `-m<mode>` | 模式: 0=录音, 1=播放, 2=双工 | 必填 |
+| `-h` | 显示帮助信息 | - |
+| `-z<frames>` | 最小帧数 | 系统自动 |
 
-### Common Options
+### 录音参数
 
-| Option | Description |
-|--------|-------------|
-| `-z<minFrameCount>` | Minimum frame count (default: system selected) |
-| `-h` | Show help message |
+| 参数 | 说明 |
+|-----|------|
+| `-s<source>` | 音频源（见下方枚举） |
+| `-r<rate>` | 采样率（8000/16000/44100/48000） |
+| `-c<count>` | 通道数（1/2/4/8） |
+| `-f<format>` | 格式：1=PCM16, 2=PCM8, 3=PCM32 |
+| `-F<flag>` | 输入标志 |
+| `-d<seconds>` | 录音时长（0=无限） |
 
-### Recording Options
+### 播放参数
 
-| Option | Description |
-|--------|-------------|
-| `-s<inputSource>` | Audio source (see below for details) |
-| `-r<sampleRate>` | Sample rate (e.g., 8000, 16000, 48000) |
-| `-c<channelCount>` | Channel count (1, 2, 4, 6, 8, 12, 16) |
-| `-f<format>` | Audio format (see below for details) |
-| `-F<inputFlag>` | Audio input flag (see below for details) |
-| `-d<duration>` | Recording duration in seconds (0 = unlimited) |
+| 参数 | 说明 |
+|-----|------|
+| `-u<usage>` | 用途类型（见下方枚举） |
+| `-C<type>` | 内容类型 |
+| `-O<flag>` | 输出标志 |
 
-### Playback Options
+### 常用枚举值
 
-| Option | Description |
-|--------|-------------|
-| `-u<usage>` | Audio usage type (see below for details) |
-| `-C<contentType>` | Audio content type (see below for details) |
-| `-O<outputFlag>` | Audio output flag (see below for details) |
+**音频源 (`-s`)**
 
-### Audio Sources (`-s`) 
+| 值 | 说明 |
+|---|------|
+| 0 | 默认 |
+| 1 | 麦克风 |
+| 6 | 语音识别 |
+| 7 | 通话 |
 
-| Value | Description |
-|-------|-------------|
-| 0 | AUDIO_SOURCE_DEFAULT |
-| 1 | AUDIO_SOURCE_MIC (Microphone) |
-| 2 | AUDIO_SOURCE_VOICE_UPLINK |
-| 3 | AUDIO_SOURCE_VOICE_DOWNLINK |
-| 4 | AUDIO_SOURCE_VOICE_CALL |
-| 5 | AUDIO_SOURCE_CAMCORDER |
-| 6 | AUDIO_SOURCE_VOICE_RECOGNITION |
-| 7 | AUDIO_SOURCE_VOICE_COMMUNICATION |
-| 8 | AUDIO_SOURCE_REMOTE_SUBMIX |
-| 9 | AUDIO_SOURCE_UNPROCESSED |
-| 10 | AUDIO_SOURCE_VOICE_PERFORMANCE |
-| 1997 | AUDIO_SOURCE_ECHO_REFERENCE |
-| 1998 | AUDIO_SOURCE_FM_TUNER |
-| 1999 | AUDIO_SOURCE_HOTWORD |
-| 2000 | AUDIO_SOURCE_ULTRASOUND |
+**用途类型 (`-u`)**
 
-### Audio Formats (`-f`) 
+| 值 | 说明 |
+|---|------|
+| 0 | 未知 |
+| 1 | 媒体 |
+| 2 | 通话 |
+| 4 | 闹钟 |
+| 14 | 游戏 |
 
-| Value | Description |
-|-------|-------------|
-| 0 | AUDIO_FORMAT_DEFAULT |
-| 1 | AUDIO_FORMAT_PCM_16_BIT |
-| 2 | AUDIO_FORMAT_PCM_8_BIT |
-| 3 | AUDIO_FORMAT_PCM_32_BIT |
-| 4 | AUDIO_FORMAT_PCM_8_24_BIT |
-| 5 | AUDIO_FORMAT_PCM_FLOAT |
-| 6 | AUDIO_FORMAT_PCM_24_BIT_PACKED |
+**音频格式 (`-f`)**
 
-### Input Flags (`-F`) 
+| 值 | 说明 |
+|---|------|
+| 1 | PCM 16-bit |
+| 3 | PCM 32-bit |
 
-| Value | Description |
-|-------|-------------|
-| 0 | AUDIO_INPUT_FLAG_NONE |
-| 1 | AUDIO_INPUT_FLAG_FAST |
-| 2 | AUDIO_INPUT_FLAG_HW_HOTWORD |
-| 4 | AUDIO_INPUT_FLAG_RAW |
-| 8 | AUDIO_INPUT_FLAG_SYNC |
-| 16 | AUDIO_INPUT_FLAG_MMAP_NOIRQ |
-| 32 | AUDIO_INPUT_FLAG_VOIP_TX |
-| 64 | AUDIO_INPUT_FLAG_HW_AV_SYNC |
-| 128 | AUDIO_INPUT_FLAG_DIRECT |
-| 256 | AUDIO_INPUT_FLAG_ULTRASOUND |
-| 512 | AUDIO_INPUT_FLAG_HOTWORD_TAP |
-| 1024 | AUDIO_INPUT_FLAG_HW_LOOKBACK |
-
-### Usage Types (`-u`) 
-
-| Value | Description |
-|-------|-------------|
-| 0 | AUDIO_USAGE_UNKNOWN |
-| 1 | AUDIO_USAGE_MEDIA |
-| 2 | AUDIO_USAGE_VOICE_COMMUNICATION |
-| 3 | AUDIO_USAGE_VOICE_COMMUNICATION_SIGNALLING |
-| 4 | AUDIO_USAGE_ALARM |
-| 5 | AUDIO_USAGE_NOTIFICATION |
-| 6 | AUDIO_USAGE_NOTIFICATION_TELEPHONY_RINGTONE |
-| 7 | AUDIO_USAGE_NOTIFICATION_COMMUNICATION_REQUEST |
-| 8 | AUDIO_USAGE_NOTIFICATION_COMMUNICATION_INSTANT |
-| 9 | AUDIO_USAGE_NOTIFICATION_COMMUNICATION_DELAYED |
-| 10 | AUDIO_USAGE_NOTIFICATION_EVENT |
-| 11 | AUDIO_USAGE_ASSISTANCE_ACCESSIBILITY |
-| 12 | AUDIO_USAGE_ASSISTANCE_NAVIGATION_GUIDANCE |
-| 13 | AUDIO_USAGE_ASSISTANCE_SONIFICATION |
-| 14 | AUDIO_USAGE_GAME |
-| 15 | AUDIO_USAGE_VIRTUAL_SOURCE |
-| 16 | AUDIO_USAGE_ASSISTANT |
-| 17 | AUDIO_USAGE_CALL_ASSISTANT |
-| 1000 | AUDIO_USAGE_EMERGENCY |
-| 1001 | AUDIO_USAGE_SAFETY |
-| 1002 | AUDIO_USAGE_VEHICLE_STATUS |
-| 1003 | AUDIO_USAGE_ANNOUNCEMENT |
-| 1004 | AUDIO_USAGE_SPEAKER_CLEANUP |
-
-### Content Types (`-C`) 
-
-| Value | Description |
-|-------|-------------|
-| 0 | AUDIO_CONTENT_TYPE_UNKNOWN |
-| 1 | AUDIO_CONTENT_TYPE_SPEECH |
-| 2 | AUDIO_CONTENT_TYPE_MUSIC |
-| 3 | AUDIO_CONTENT_TYPE_MOVIE |
-| 4 | AUDIO_CONTENT_TYPE_SONIFICATION |
-| 1997 | AUDIO_CONTENT_TYPE_ULTRASOUND |
-
-### Output Flags (`-O`) 
-
-| Value | Description |
-|-------|-------------|
-| 0 | AUDIO_OUTPUT_FLAG_NONE |
-| 1 | AUDIO_OUTPUT_FLAG_DIRECT |
-| 2 | AUDIO_OUTPUT_FLAG_PRIMARY |
-| 4 | AUDIO_OUTPUT_FLAG_FAST |
-| 8 | AUDIO_OUTPUT_FLAG_DEEP_BUFFER |
-| 16 | AUDIO_OUTPUT_FLAG_COMPRESS_OFFLOAD |
-| 32 | AUDIO_OUTPUT_FLAG_NON_BLOCKING |
-| 64 | AUDIO_OUTPUT_FLAG_HW_AV_SYNC |
-| 128 | AUDIO_OUTPUT_FLAG_TTS |
-| 256 | AUDIO_OUTPUT_FLAG_RAW |
-| 512 | AUDIO_OUTPUT_FLAG_SYNC |
-| 1024 | AUDIO_OUTPUT_FLAG_IEC958_NONAUDIO |
-| 8192 | AUDIO_OUTPUT_FLAG_DIRECT_PCM |
-| 16384 | AUDIO_OUTPUT_FLAG_MMAP_NOIRQ |
-| 32768 | AUDIO_OUTPUT_FLAG_VOIP_RX |
-| 65536 | AUDIO_OUTPUT_FLAG_INCALL_MUSIC |
-| 131072 | AUDIO_OUTPUT_FLAG_GAPLESS_OFFLOAD |
-| 262144 | AUDIO_OUTPUT_FLAG_SPATIALIZER |
-| 524288 | AUDIO_OUTPUT_FLAG_ULTRASOUND |
-| 1048576 | AUDIO_OUTPUT_FLAG_BIT_PERFECT |
-
-## Examples
-
-### Recording
+## 文件传输
 
 ```bash
-# Record for 30 seconds at 48000 Hz, 2 channels, 16-bit, none input flag, 960 frame size, and save to auto-generated file
-./audio_test_client -m0 -s1 -r48000 -c2 -f1 -F1 -z960 -d30
+# 从设备拉取录音文件
+adb pull /data/audio_*.wav ./
 
-# Record for 30 seconds at 48000 Hz, 2 channels, 16-bit, none input flag, 960 frame size, and save to specified file
-./audio_test_client -m0 -s1 -r48000 -c2 -f1 -F1 -z960 -d30 /data/audio_test.wav
-```
-
-### Playback
-
-```bash
-# Play audio with default file
-./audio_test_client -m1 -u1 -C0 -O4 -z960
-
-# Play audio with specified file
-./audio_test_client -m1 -u1 -C0 -O4 -z960 /data/audio_test.wav
-```
-
-### Duplex Mode
-
-```bash
-# Duplex audio for 30 seconds with auto-generated recorded file
-./audio_test_client -m2 -s1 -r48000 -c2 -f1 -F1 -u1 -C0 -O4 -z960 -d30
-
-# Duplex audio for 30 seconds with specified recorded file
-./audio_test_client -m2 -s1 -r48000 -c2 -f1 -F1 -u1 -C0 -O4 -z960 -d30 /data/audio_test.wav
-```
-
-## File Management
-
-### Pull Recorded Files
-
-```bash
-# Pull recorded files from device to host
-adb pull /data/audio_test.wav
-```
-
-### Push Files for Playback
-
-```bash
-# Push WAV files from host to device
+# 推送文件到设备播放
 adb push audio_test.wav /data/
 ```
 
-## Technical Details
+## 注意事项
 
-- **Default Output Directory**: `/data/`
-- **File Format**: WAV (RIFF)
-- **Maximum Recording Size**: 2 GiB
-- **Signal Handling**: Uses atomic flags for safe termination
-- **Resource Management**: Proper cleanup of AudioRecord/AudioTrack instances
+1. 设备需 root 权限
+2. 可选：`adb shell setenforce 0` 关闭 SELinux
+3. 完整参数列表运行：`./audio_test_client -h`
+4. 录音文件自动保存到 `/data/` 目录
+5. 最大录音文件限制：2 GiB
+6. 按 `Ctrl+C` 可安全终止程序
 
-## Troubleshooting
+## 代码架构
 
-### Common Issues
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        工具类                                   │
+├─────────────────────────────────────────────────────────────────┤
+│  WAVFile              - WAV 文件读写管理                        │
+│  BufferManager        - 缓冲区管理                              │
+│  AudioUtils           - 音频工具函数集合                        │
+│  CommandLineParser    - 命令行参数解析器                        │
+│  AudioOperationFactory- 音频操作工厂类                          │
+└─────────────────────────────────────────────────────────────────┘
 
-1. **Permission Denied**: Ensure the binary has executable permissions and SELinux is properly configured
-2. **Device Not Found**: Verify ADB connection and device is in debug mode
-3. **Audio Source Not Available**: Some audio sources may not be supported on all devices
-4. **File Write Error**: Check if the output directory exists and is writable
+┌─────────────────────────────────────────────────────────────────┐
+│                     配置与参数管理                               │
+├─────────────────────────────────────────────────────────────────┤
+│  struct AudioConfig                                              │
+│    - 公共参数: sampleRate, channelCount, format                 │
+│    - 录音参数: inputSource, inputFlag, durationSeconds          │
+│    - 播放参数: usage, contentType, outputFlag                   │
+│                                                                 │
+│  class AudioParameterManager                                    │
+│    - setOpenSource() / setCloseSource()                        │
+│    - setChannelMask() / setCustomParameter()                    │
+└─────────────────────────────────────────────────────────────────┘
 
-### Debugging
+┌─────────────────────────────────────────────────────────────────┐
+│                     核心类层次结构                               │
+├─────────────────────────────────────────────────────────────────┤
+│                           AudioConfig                           │
+│                              │                                  │
+│                              ▼                                  │
+│              ┌─────────────────────────────────┐               │
+│              │     AudioOperation              │               │
+│              │   (抽象基类)                     │               │
+│              │  - mConfig                      │               │
+│              │  - mParamManager                │               │
+│              │  + setupSignalHandler()         │               │
+│              │  + execute() = 0                │               │
+│              └─────────────────────────────────┘               │
+│                        │                                        │
+│           ┌────────────┼────────────┐                          │
+│           ▼            ▼            ▼                          │
+│   ┌─────────────┐ ┌─────────────┐ ┌─────────────────┐          │
+│   │AudioRecord  │ │AudioPlay    │ │AudioDuplex      │          │
+│   │Operation    │ │Operation    │ │Operation        │          │
+│   │录音模式      │ │播放模式     │ │双工模式         │          │
+│   └─────────────┘ └─────────────┘ └─────────────────┘          │
+└─────────────────────────────────────────────────────────────────┘
 
-- Check logcat for detailed error messages
-- Use `-h` to see all available options
-- Verify audio device availability with `adb shell dumpsys media.audio_flinger`
+┌─────────────────────────────────────────────────────────────────┐
+│                        文件格式                                  │
+├─────────────────────────────────────────────────────────────────┤
+│  录音输出: /data/audio_<timestamp>.wav                           │
+│  文件格式: RIFF WAVE (PCM)                                       │
+│  头部大小: 44 bytes                                              │
+│  数据限制: 最大 2 GiB                                            │
+└─────────────────────────────────────────────────────────────────┘
+```
 
-## License
+## 项目文件
 
-This project is licensed under the Apache License 2.0 - see the LICENSE file for details.
+```
+audio_test_client/
+├── audio_test_client.cpp    # 主程序源码
+├── Android.mk               # Android Makefile
+├── Android.bp               # Android.bp
+└── README.md                # 本文档
+```
