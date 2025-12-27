@@ -19,17 +19,21 @@ Android 音频录制/播放测试工具，支持三种工作模式。
 mm audio_test_client
 
 # 推送到设备
+adb root
+adb remount
 adb push audio_test_client /data/
-adb shell chmod 777 /data/audio_test_client
+adb shell
+cd /data
+chmod 777 /data/audio_test_client
 
 # 录音示例
-adb shell /data/audio_test_client -m0 -s1 -r48000 -c2 -f1 -F1 -z960 -d20
+./audio_test_client -m0 -s1 -r48000 -c2 -f1 -F1 -z960 -d20
 
 # 播放示例
-adb shell /data/audio_test_client -m1 -u1 -C0 -O4 -z960 /data/audio_test.wav
+./audio_test_client -m1 -u1 -C0 -O4 -z960 /data/audio_test.wav
 
 # 双工示例
-adb shell /data/audio_test_client -m2 -s1 -r48000 -c2 -f1 -F1 -u1 -C0 -O4 -z960 -z960 -d20
+./audio_test_client -m2 -s1 -r48000 -c2 -f1 -F1 -u1 -C0 -O4 -z960 -d20
 ```
 
 ## 命令行参数
@@ -51,7 +55,7 @@ audio_test_client -m<mode> [options] [audio_file]
 | 参数 | 说明 |
 |-----|------|
 | `-s<source>` | 音频源（见下方枚举） |
-| `-r<rate>` | 采样率（8000/16000/44100/48000） |
+| `-r<rate>` | 采样率（8000/16000/48000） |
 | `-c<count>` | 通道数（1/2/4/8） |
 | `-f<format>` | 格式：1=PCM16, 2=PCM8, 3=PCM32 |
 | `-F<flag>` | 输入标志 |
@@ -80,11 +84,10 @@ audio_test_client -m<mode> [options] [audio_file]
 
 | 值 | 说明 |
 |---|------|
-| 0 | 未知 |
 | 1 | 媒体 |
 | 2 | 通话 |
 | 4 | 闹钟 |
-| 14 | 游戏 |
+| 5 | 通知 |
 
 **音频格式 (`-f`)**
 
@@ -92,16 +95,6 @@ audio_test_client -m<mode> [options] [audio_file]
 |---|------|
 | 1 | PCM 16-bit |
 | 3 | PCM 32-bit |
-
-## 文件传输
-
-```bash
-# 从设备拉取录音文件
-adb pull /data/audio_*.wav ./
-
-# 推送文件到设备播放
-adb push audio_test.wav /data/
-```
 
 ## 注意事项
 
@@ -116,51 +109,51 @@ adb push audio_test.wav /data/
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                        工具类                                   │
+│                        工具类                                    │
 ├─────────────────────────────────────────────────────────────────┤
-│  WAVFile              - WAV 文件读写管理                        │
-│  BufferManager        - 缓冲区管理                              │
-│  AudioUtils           - 音频工具函数集合                        │
-│  CommandLineParser    - 命令行参数解析器                        │
-│  AudioOperationFactory- 音频操作工厂类                          │
+│  WAVFile              - WAV 文件读写管理                          │
+│  BufferManager        - 缓冲区管理                               │
+│  AudioUtils           - 音频工具函数集合                          │
+│  CommandLineParser    - 命令行参数解析器                          │
+│  AudioOperationFactory- 音频操作工厂类                            │
 └─────────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────────┐
-│                     配置与参数管理                               │
+│                     配置与参数管理                                │
 ├─────────────────────────────────────────────────────────────────┤
-│  struct AudioConfig                                              │
-│    - 公共参数: sampleRate, channelCount, format                 │
-│    - 录音参数: inputSource, inputFlag, durationSeconds          │
-│    - 播放参数: usage, contentType, outputFlag                   │
+│  struct AudioConfig                                             │
+│    - 公共参数: sampleRate, channelCount, format                  │
+│    - 录音参数: inputSource, inputFlag, durationSeconds           │
+│    - 播放参数: usage, contentType, outputFlag                    │
 │                                                                 │
 │  class AudioParameterManager                                    │
-│    - setOpenSource() / setCloseSource()                        │
+│    - setOpenSource() / setCloseSource()                         │
 │    - setChannelMask() / setCustomParameter()                    │
 └─────────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────────┐
-│                     核心类层次结构                               │
+│                     核心类层次结构                                │
 ├─────────────────────────────────────────────────────────────────┤
 │                           AudioConfig                           │
 │                              │                                  │
 │                              ▼                                  │
 │              ┌─────────────────────────────────┐               │
 │              │     AudioOperation              │               │
-│              │   (抽象基类)                     │               │
+│              │   (抽象基类)                     │                │
 │              │  - mConfig                      │               │
 │              │  - mParamManager                │               │
 │              │  + setupSignalHandler()         │               │
 │              │  + execute() = 0                │               │
 │              └─────────────────────────────────┘               │
-│                        │                                        │
+│                        │                                       │
 │           ┌────────────┼────────────┐                          │
 │           ▼            ▼            ▼                          │
 │   ┌─────────────┐ ┌─────────────┐ ┌─────────────────┐          │
 │   │AudioRecord  │ │AudioPlay    │ │AudioDuplex      │          │
 │   │Operation    │ │Operation    │ │Operation        │          │
-│   │录音模式      │ │播放模式     │ │双工模式         │          │
+│   │录音模式      │ │播放模式       │ │双工模式          │          │
 │   └─────────────┘ └─────────────┘ └─────────────────┘          │
-└─────────────────────────────────────────────────────────────────┘
+└────────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────────┐
 │                        文件格式                                  │
@@ -168,7 +161,7 @@ adb push audio_test.wav /data/
 │  录音输出: /data/audio_<timestamp>.wav                           │
 │  文件格式: RIFF WAVE (PCM)                                       │
 │  头部大小: 44 bytes                                              │
-│  数据限制: 最大 2 GiB                                            │
+│  数据限制: 最大 2 GiB                                             │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
