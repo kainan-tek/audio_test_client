@@ -11,6 +11,7 @@
 #include <stdlib.h>
 #include <string>
 #include <sys/stat.h>
+#include <sys/time.h>
 #include <sys/types.h>
 #include <time.h>
 #include <unistd.h>
@@ -26,7 +27,7 @@
 
 #define LOG_TAG "audio_test_client"
 
-#define AUDIO_TEST_CLIENT_VERSION "2.0.0"
+#define AUDIO_TEST_CLIENT_VERSION "2.1.0"
 #define SET_PARAMS_ENABLE 1
 
 using namespace android;
@@ -302,6 +303,16 @@ public:
         strftime(formatTime, 32, "%Y%m%d_%H.%M.%S", now);
     }
 
+    // Function to get timestamp for logging (with millisecond precision)
+    static void getTimestamp(char* timestamp) {
+        struct timeval tv;
+        gettimeofday(&tv, nullptr);
+
+        struct tm* now = localtime(&tv.tv_sec);
+        snprintf(timestamp, 16, "%02d:%02d:%02d.%03d", now->tm_hour, now->tm_min, now->tm_sec,
+                 static_cast<int>(tv.tv_usec / 1000));
+    }
+
     // Build default record file path with timestamp unless an override is provided
     static std::string makeRecordFilePath(const int32_t sampleRate,
                                           const int32_t channelCount,
@@ -343,15 +354,13 @@ struct AudioConfig {
     audio_content_type_t contentType = AUDIO_CONTENT_TYPE_UNKNOWN;
     audio_output_flags_t outputFlag = AUDIO_OUTPUT_FLAG_NONE;
     std::string playFilePath = "/data/audio_test.wav";
+
+    // Set params parameters
+    std::vector<int32_t> setParams = {};
 };
 
 /************************** AudioMode Definitions ******************************/
-enum AudioMode {
-    MODE_INVALID = -1, // invalid mode
-    MODE_RECORD = 0,   // record only
-    MODE_PLAY = 1,     // play only
-    MODE_DUPLEX = 2    // record and play simultaneously
-};
+enum AudioMode { MODE_INVALID = -1, MODE_RECORD = 0, MODE_PLAY = 1, MODE_DUPLEX = 2, MODE_SET_PARAMS = 100 };
 
 /************************** Audio Parameter Manager ******************************/
 static const String8 PARAM_OPEN_SOURCE = String8("open_source");   // open_source参数名
@@ -366,11 +375,11 @@ public:
     // Helper function to convert audio_usage_t enum to string
     String8 audioUsageToString(audio_usage_t usage);
 
-    // Set open source parameter before starting AudioTrack
-    void setOpenSource();
+    // Set open source parameter with specific audio usage
+    void setOpenSourceWithUsage(audio_usage_t usage);
 
-    // Set close source parameter after stopping AudioTrack
-    void setCloseSource();
+    // Set close source parameter with specific audio usage
+    void setCloseSourceWithUsage(audio_usage_t usage);
 
     // Set channel mask parameter for AudioTrack
     void setChannelMask(const sp<AudioTrack>& audioTrack, audio_channel_mask_t channelMask);
@@ -412,12 +421,12 @@ String8 AudioParameterManager::audioUsageToString(audio_usage_t usage) {
     return String8::format("0:%s", usageName);
 }
 
-void AudioParameterManager::setOpenSource() {
-    setSystemParameter(PARAM_OPEN_SOURCE, audioUsageToString(mConfig.usage));
+void AudioParameterManager::setOpenSourceWithUsage(audio_usage_t usage) {
+    setSystemParameter(PARAM_OPEN_SOURCE, audioUsageToString(usage));
 }
 
-void AudioParameterManager::setCloseSource() {
-    setSystemParameter(PARAM_CLOSE_SOURCE, audioUsageToString(mConfig.usage));
+void AudioParameterManager::setCloseSourceWithUsage(audio_usage_t usage) {
+    setSystemParameter(PARAM_CLOSE_SOURCE, audioUsageToString(usage));
 }
 
 void AudioParameterManager::setChannelMask(const sp<AudioTrack>& audioTrack, const audio_channel_mask_t channelMask) {
@@ -652,7 +661,7 @@ protected:
 
         // set params before AudioTrack.start()
         if (componentType == AudioComponentType::AUDIO_TRACK) {
-            mParamManager.setOpenSource();
+            mParamManager.setOpenSourceWithUsage(mConfig.usage);
         }
 
         status_t startResult = component->start();
@@ -773,7 +782,9 @@ protected:
 
         // Convert to dB scale (with floor at -60dB)
         const float dbLevel = peakAmplitude > 0.0f ? std::max(20.0f * std::log10(peakAmplitude), DB_FLOOR) : DB_FLOOR;
-        printf("Audio Level: %.1f dB, bytes: %zu\n", dbLevel, size);
+        char timestamp[16] = {0};
+        AudioUtils::getTimestamp(timestamp);
+        printf("[%s] Audio Level: %.1f dB, bytes: %zu\n", timestamp, dbLevel, size);
     }
 };
 
@@ -906,7 +917,7 @@ public:
         // Cleanup
         if (audioTrack != nullptr) {
             audioTrack->stop();
-            mParamManager.setCloseSource(); // set params after AudioTrack.stop()
+            mParamManager.setCloseSourceWithUsage(mConfig.usage); // set params after AudioTrack.stop()
         }
         wavFile.close();
 
@@ -1003,7 +1014,7 @@ public:
         }
         if (audioTrack != nullptr) {
             audioTrack->stop();
-            mParamManager.setCloseSource(); // set params after AudioTrack.stop()
+            mParamManager.setCloseSourceWithUsage(mConfig.usage); // set params after AudioTrack.stop()
         }
         wavFile.finalize();
 
@@ -1118,6 +1129,53 @@ private:
     }
 };
 
+/************************** Set Parameters Operation ******************************/
+class SetParamsOperation : public AudioOperation {
+public:
+    explicit SetParamsOperation(const AudioConfig& config, const std::vector<int32_t>& params)
+        : AudioOperation(config), mParams(params) {}
+
+    int32_t execute() override {
+        printf("SetParams operation started with %zu parameters\n", mParams.size());
+
+        for (size_t i = 0; i < mParams.size(); ++i) {
+            printf("  Parameter %zu: %d\n", i + 1, mParams[i]);
+        }
+
+        if (mParams.empty()) {
+            printf("Error: No parameters provided\n");
+            return -1;
+        }
+
+        int32_t sourceType = mParams[0];
+        if (mParams.size() < 2) {
+            printf("Error: Missing audio usage parameter\n");
+            return -1;
+        }
+        int32_t usageValue = mParams[1];
+        audio_usage_t usage = static_cast<audio_usage_t>(usageValue);
+
+        switch (sourceType) {
+        case 1:
+            printf("Setting open_source with usage: %d\n", usage);
+            mParamManager.setOpenSourceWithUsage(usage);
+            break;
+        case 2:
+            printf("Setting close_source with usage: %d\n", usage);
+            mParamManager.setCloseSourceWithUsage(usage);
+            break;
+        default:
+            printf("Error: Unknown primary parameter %d (1=open_source, 2=close_source)\n", sourceType);
+            return -1;
+        }
+
+        printf("SetParams operation completed\n");
+        return 0;
+    }
+
+    std::vector<int32_t> mParams;
+};
+
 /************************** Audio Operation Factory ******************************/
 class AudioOperationFactory {
 public:
@@ -1135,6 +1193,10 @@ public:
             printf("Creating DUPLEX operation\n");
             return std::make_unique<AudioDuplexOperation>(config);
 
+        case MODE_SET_PARAMS:
+            printf("Creating SET_PARAMS operation\n");
+            return std::make_unique<SetParamsOperation>(config, config.setParams);
+
         default:
             printf("Error: Invalid mode specified: %d\n", static_cast<int>(mode));
             return nullptr;
@@ -1147,7 +1209,9 @@ class CommandLineParser {
 public:
     static void parseArguments(int32_t argc, char** argv, AudioMode& mode, AudioConfig& config) {
         int32_t opt = 0;
-        while ((opt = getopt(argc, argv, "m:s:r:c:f:F:u:C:O:z:d:h")) != -1) {
+        int32_t xParam = -1; // -x parameter for set params mode
+        int32_t yParam = -1; // -y parameter for set params mode
+        while ((opt = getopt(argc, argv, "m:s:r:c:f:F:u:C:O:z:d:h:x:y:")) != -1) {
             switch (opt) {
             case 'm': // mode
                 mode = static_cast<AudioMode>(atoi(optarg));
@@ -1182,6 +1246,20 @@ public:
             case 'z': // min frame count
                 config.minFrameCount = atoi(optarg);
                 break;
+            case 'x': // first parameter for set params mode (1=open_source, 2=close_source)
+                if (mode == MODE_SET_PARAMS) {
+                    xParam = atoi(optarg);
+                } else {
+                    printf("Warning: -x option only valid in set params mode (-m 100)\n");
+                }
+                break;
+            case 'y': // second parameter for set params mode (audio usage value)
+                if (mode == MODE_SET_PARAMS) {
+                    yParam = atoi(optarg);
+                } else {
+                    printf("Warning: -y option only valid in set params mode (-m 100)\n");
+                }
+                break;
             case 'h': // help for use
                 showHelp();
                 exit(0);
@@ -1191,11 +1269,19 @@ public:
             }
         }
 
+        // Combine x and y parameters into setParams vector
+        if (mode == MODE_SET_PARAMS && xParam >= 1) {
+            config.setParams.push_back(xParam);
+            if (yParam >= 1) {
+                config.setParams.push_back(yParam);
+            }
+        }
+
         // Get audio file path from remaining argument
         if (optind < argc) {
             if (mode == MODE_PLAY) {
                 config.playFilePath = argv[optind];
-            } else {
+            } else if ((mode == MODE_RECORD) || (mode == MODE_DUPLEX)) {
                 config.recordFilePath = argv[optind];
             }
         }
@@ -1210,6 +1296,7 @@ Modes:
   -m0   Record mode
   -m1   Play mode
   -m2   Duplex mode (record and play simultaneously)
+  -m100 Set params mode (set audio parameters without playback/recording)
 
 Record Options:
   -s{inputSource}     Set audio source
@@ -1308,6 +1395,15 @@ Play Options:
                        1048576: AUDIO_OUTPUT_FLAG_BIT_PERFECT (Bit perfect audio output)
   -z{minFrameCount}   Set min frame count (default: system selected)
 
+Set Params Options:
+  -x{param1}          First parameter
+                       1: open_source
+                       2: close_source
+  -y{param2}          Second parameter (audio usage)
+                       1: AUDIO_USAGE_MEDIA
+                       2: AUDIO_USAGE_VOICE_COMMUNICATION
+                       ... (see usage)
+
 For more details, please refer to system/media/audio/include/system/audio-hal-enums.h
 
 General Options:
@@ -1317,6 +1413,7 @@ Examples:
   Record: audio_test_client -m0 -s1 -r48000 -c2 -f1 -F1 -z960 -d20
   Play:   audio_test_client -m1 -u1 -C0 -O4 -z960 /data/audio_test.wav
   Duplex: audio_test_client -m2 -s1 -r48000 -c2 -f1 -F1 -u1 -C0 -O4 -z960 -d20
+  SetParams: audio_test_client -m100 -x1 -y1
 )";
         puts(helpText);
     }

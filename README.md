@@ -2,7 +2,7 @@
 
 Android 音频录制/播放测试工具，支持三种工作模式。
 
-**版本:** 2.0.0
+**版本:** 2.1.0
 
 ## 功能特性
 
@@ -11,6 +11,7 @@ Android 音频录制/播放测试工具，支持三种工作模式。
 | 录音 | `-m0` | 从指定音频源录制到 WAV 文件 |
 | 播放 | `-m1` | 播放 WAV 音频文件 |
 | 双工 | `-m2` | 同时录音和播放（回环测试） |
+| 设置参数 | `-m100` | 设置音频系统参数（open_source/close_source） |
 
 ## 快速开始
 
@@ -34,6 +35,9 @@ chmod 777 /data/audio_test_client
 
 # 双工示例
 ./audio_test_client -m2 -s1 -r48000 -c2 -f1 -F1 -u1 -C0 -O4 -z960 -d20
+
+# 设置参数示例（打开音频源）
+./audio_test_client -m100 -x 1 -y 1
 ```
 
 ## 命令行参数
@@ -46,11 +50,11 @@ audio_test_client -m<mode> [options] [audio_file]
 
 | 参数 | 说明 | 默认值 |
 |-----|------|-------|
-| `-m<mode>` | 模式: 0=录音, 1=播放, 2=双工 | 必填 |
+| `-m<mode>` | 模式: 0=录音, 1=播放, 2=双工, 100=设置参数 | 必填 |
 | `-h` | 显示帮助信息 | - |
 | `-z<frames>` | 最小帧数 | 系统自动 |
 
-### 录音参数
+### 录音参数 (-m0)
 
 | 参数 | 说明 |
 |-----|------|
@@ -61,13 +65,20 @@ audio_test_client -m<mode> [options] [audio_file]
 | `-F<flag>` | 输入标志 |
 | `-d<seconds>` | 录音时长（0=无限） |
 
-### 播放参数
+### 播放参数 (-m1)
 
 | 参数 | 说明 |
 |-----|------|
 | `-u<usage>` | 用途类型（见下方枚举） |
 | `-C<type>` | 内容类型 |
 | `-O<flag>` | 输出标志 |
+
+### 参数设置模式 (-m100)
+
+| 参数 | 说明 |
+|-----|------|
+| `-x<param>` | 设置参数模式下的主要参数：1=open_source, 2=close_source | 仅-m100有效 |
+| `-y<param>` | 设置参数模式下的音频用途参数：1=AUDIO_USAGE_MEDIA; ... | 仅-m100有效 |
 
 ### 常用枚举值
 
@@ -80,14 +91,32 @@ audio_test_client -m<mode> [options] [audio_file]
 | 6 | 语音识别 |
 | 7 | 通话 |
 
-**用途类型 (`-u`)**
+**用途类型 (`-u` / `-y`)**
 
 | 值 | 说明 |
 |---|------|
-| 1 | 媒体 |
-| 2 | 通话 |
-| 4 | 闹钟 |
-| 5 | 通知 |
+| 1 | 媒体 (AUDIO_USAGE_MEDIA) |
+| 2 | 通话 (AUDIO_USAGE_VOICE_COMMUNICATION) |
+| 3 | 通话信号 (AUDIO_USAGE_VOICE_COMMUNICATION_SIGNALLING) |
+| 4 | 闹钟 (AUDIO_USAGE_ALARM) |
+| 5 | 通知 (AUDIO_USAGE_NOTIFICATION) |
+| 6 | 电话铃声 (AUDIO_USAGE_NOTIFICATION_TELEPHONY_RINGTONE) |
+| 7 | 通信请求 (AUDIO_USAGE_NOTIFICATION_COMMUNICATION_REQUEST) |
+| 8 | 即时通信 (AUDIO_USAGE_NOTIFICATION_COMMUNICATION_INSTANT) |
+| 9 | 延迟通信 (AUDIO_USAGE_NOTIFICATION_COMMUNICATION_DELAYED) |
+| 10 | 事件通知 (AUDIO_USAGE_NOTIFICATION_EVENT) |
+| 11 | 无障碍服务 (AUDIO_USAGE_ASSISTANCE_ACCESSIBILITY) |
+| 12 | 导航引导 (AUDIO_USAGE_ASSISTANCE_NAVIGATION_GUIDANCE) |
+| 13 | 声音反馈 (AUDIO_USAGE_ASSISTANCE_SONIFICATION) |
+| 14 | 游戏 (AUDIO_USAGE_GAME) |
+| 15 | 语音助手 (AUDIO_USAGE_ASSISTANT) |
+
+**设置参数 (`-x`)**
+
+| 值 | 说明 |
+|---|------|
+| 1 | 打开音频源 (open_source) |
+| 2 | 关闭音频源 (close_source) |
 
 **音频格式 (`-f`)**
 
@@ -125,10 +154,11 @@ audio_test_client -m<mode> [options] [audio_file]
 │    - 公共参数: sampleRate, channelCount, format                  │
 │    - 录音参数: inputSource, inputFlag, durationSeconds           │
 │    - 播放参数: usage, contentType, outputFlag                    │
+│    - 设置参数: setParams (only for set params)                   │
 │                                                                 │
 │  class AudioParameterManager                                    │
-│    - setOpenSource() / setCloseSource()                         │
-│    - setChannelMask() / setCustomParameter()                    │
+│    - setOpenSourceWithUsage() / setCloseSourceWithUsage()       │
+│    - setChannelMask()                                           │
 └─────────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────────┐
@@ -137,23 +167,23 @@ audio_test_client -m<mode> [options] [audio_file]
 │                           AudioConfig                           │
 │                              │                                  │
 │                              ▼                                  │
-│              ┌─────────────────────────────────┐               │
-│              │     AudioOperation              │               │
-│              │   (抽象基类)                     │                │
-│              │  - mConfig                      │               │
-│              │  - mParamManager                │               │
-│              │  + setupSignalHandler()         │               │
-│              │  + execute() = 0                │               │
-│              └─────────────────────────────────┘               │
-│                        │                                       │
-│           ┌────────────┼────────────┐                          │
-│           ▼            ▼            ▼                          │
-│   ┌─────────────┐ ┌─────────────┐ ┌─────────────────┐          │
-│   │AudioRecord  │ │AudioPlay    │ │AudioDuplex      │          │
-│   │Operation    │ │Operation    │ │Operation        │          │
-│   │录音模式      │ │播放模式       │ │双工模式          │          │
-│   └─────────────┘ └─────────────┘ └─────────────────┘          │
-└────────────────────────────────────────────────────────────────┘
+│              ┌─────────────────────────────────┐                │
+│              │     AudioOperation              │                │
+│              │   (abstract base class)         │                │
+│              │  - mConfig                      │                │
+│              │  - mParamManager                │                │
+│              │  + setupSignalHandler()         │                │
+│              │  + execute() = 0                │                │
+│              └─────────────────────────────────┘                │
+│                        │                                        │
+│           ┌────────────┼────────────┐────────────┐              │
+│           ▼            ▼            ▼            ▼              │
+│   ┌────────────┐ ┌───────────┐ ┌────────────┐ ┌────────────┐    │
+│   │AudioRecord │ │AudioPlay  │ │AudioDuplex │ │SetParams   │    │
+│   │Operation   │ │Operation  │ │Operation   │ │Operation   │    │
+│   │Record Mode │ │Play Mode  │ │Duplex Mode │ │Params Mode │    │ 
+│   └────────────┘ └───────────┘ └────────────┘ └────────────┘    │
+└─────────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────────┐
 │                        文件格式                                  │
@@ -161,7 +191,7 @@ audio_test_client -m<mode> [options] [audio_file]
 │  录音输出: /data/audio_<timestamp>.wav                           │
 │  文件格式: RIFF WAVE (PCM)                                       │
 │  头部大小: 44 bytes                                              │
-│  数据限制: 最大 2 GiB                                             │
+│  数据限制: max 2 GiB                                             │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
