@@ -14,6 +14,7 @@
 #include <sys/time.h>
 #include <sys/types.h>
 #include <time.h>
+#include <type_traits>
 #include <unistd.h>
 #include <unordered_map>
 
@@ -333,7 +334,7 @@ public:
 
 /************************** Global Variables ******************************/
 // Global exit flag for signal handling
-static std::atomic<bool> g_exitRequested(false);
+static std::atomic<bool> sExitRequested(false);
 
 /************************** Audio Configuration ******************************/
 struct AudioConfig {
@@ -458,7 +459,7 @@ void AudioParameterManager::setAudioTrackParameter(const sp<AudioTrack>& audioTr
 /************************** Audio Operation Base Class ******************************/
 class AudioOperation {
 public:
-    explicit AudioOperation(const AudioConfig& config) : mConfig(config), mParamManager(config) {
+    explicit AudioOperation(const AudioConfig& config) : mConfig(config), mAudioParamManager(config) {
         setupSignalHandler();
     }
     virtual ~AudioOperation() = default;
@@ -466,14 +467,11 @@ public:
 
 protected:
     AudioConfig mConfig;
-    AudioParameterManager mParamManager;
+    AudioParameterManager mAudioParamManager;
     static constexpr uint32_t kMaxAudioDataSize = 2u * 1024u * 1024u * 1024u; // 2 GiB
     static constexpr uint32_t kProgressReportInterval = 10;                   // report progress every 10 seconds
     static constexpr uint32_t kLevelMeterInterval = 30;                       // Update level meter every 30 frames
     uint32_t mLevelMeterCounter = 0;                                          // For level meter updates
-
-    // Enum for audio component types to avoid string comparisons
-    enum class AudioComponentType { AUDIO_RECORD, AUDIO_TRACK };
 
     // Common success logging helper (console only)
     void logInfo(const char* message, const char* details = nullptr) const {
@@ -555,14 +553,14 @@ protected:
         return attributionSource;
     }
 
-    // Common AudioRecord initialization helper
-    bool
-    initializeAudioRecordHelper(sp<AudioRecord>& audioRecord, audio_channel_mask_t channelMask, size_t frameCount) {
-        AttributionSourceState attributionSource = createAttributionSource();
-
-        audio_attributes_t attributes;
-        memset(&attributes, 0, sizeof(attributes));
-        attributes.source = mConfig.inputSource;
+    // Common AudioRecord initialization - enhanced version
+    bool initializeAudioRecord(sp<AudioRecord>& audioRecord) {
+        audio_channel_mask_t channelMask = audio_channel_in_mask_from_count(mConfig.channelCount);
+        if (AudioRecord::getMinFrameCount(&mConfig.minFrameCount, mConfig.sampleRate, mConfig.format, channelMask) !=
+            NO_ERROR) {
+            logWarning("Cannot get min frame count, using default value", nullptr);
+        }
+        const size_t frameCount = calculateFrameCount();
 
         logInfo("Initialize AudioRecord",
                 String8::format(
@@ -571,6 +569,9 @@ protected:
                     frameCount)
                     .c_str());
 
+        AttributionSourceState attributionSource = createAttributionSource();
+        audio_attributes_t attributes{};
+        attributes.source = mConfig.inputSource;
         audioRecord = sp<AudioRecord>::make(attributionSource);
         if (audioRecord->set(mConfig.inputSource, // input source
                              mConfig.sampleRate,  // sample rate
@@ -603,14 +604,10 @@ protected:
         return true;
     }
 
-    // Common AudioTrack initialization helper
-    bool initializeAudioTrackHelper(sp<AudioTrack>& audioTrack, audio_channel_mask_t channelMask, size_t frameCount) {
-        AttributionSourceState attributionSource = createAttributionSource();
-
-        audio_attributes_t attributes;
-        memset(&attributes, 0, sizeof(attributes));
-        attributes.usage = mConfig.usage;
-        attributes.content_type = mConfig.contentType;
+    // Common AudioTrack initialization - enhanced version
+    bool initializeAudioTrack(sp<AudioTrack>& audioTrack) {
+        audio_channel_mask_t channelMask = audio_channel_out_mask_from_count(mConfig.channelCount);
+        const size_t frameCount = calculateFrameCount();
 
         logInfo("Initialize AudioTrack",
                 String8::format(
@@ -618,6 +615,10 @@ protected:
                     mConfig.usage, mConfig.sampleRate, mConfig.channelCount, mConfig.format, channelMask, frameCount)
                     .c_str());
 
+        AttributionSourceState attributionSource = createAttributionSource();
+        audio_attributes_t attributes{};
+        attributes.usage = mConfig.usage;
+        attributes.content_type = mConfig.contentType;
         audioTrack = sp<AudioTrack>::make(attributionSource);
         if (audioTrack->set(AUDIO_STREAM_DEFAULT, // streamType
                             mConfig.sampleRate,   // sampleRate
@@ -654,14 +655,18 @@ protected:
     }
 
     // Generic audio component start function that works with both AudioRecord and AudioTrack
-    template <typename AudioComponent>
-    bool startAudioComponent(const sp<AudioComponent>& component, AudioComponentType componentType) {
-        const char* componentName = (componentType == AudioComponentType::AUDIO_RECORD) ? "AudioRecord" : "AudioTrack";
-        logInfo("Starting", componentName);
+    template <typename T> bool startAudioComponent(const sp<T>& component) {
+        const char* componentName;
+        if constexpr (std::is_same_v<T, AudioRecord>) {
+            componentName = "AudioRecord";
+        } else if constexpr (std::is_same_v<T, AudioTrack>) {
+            componentName = "AudioTrack";
+        }
 
+        logInfo("Starting", componentName);
         // set params before AudioTrack.start()
-        if (componentType == AudioComponentType::AUDIO_TRACK) {
-            mParamManager.setOpenSourceWithUsage(mConfig.usage);
+        if constexpr (std::is_same_v<T, AudioTrack>) {
+            mAudioParamManager.setOpenSourceWithUsage(mConfig.usage);
         }
 
         status_t startResult = component->start();
@@ -673,8 +678,18 @@ protected:
         return true;
     }
 
+    // Common audio component stop helper (template version)
+    template <typename T> void stopAudioComponent(const sp<T>& audioComponent) const {
+        if (audioComponent != nullptr) {
+            audioComponent->stop();
+            if constexpr (std::is_same_v<T, AudioTrack>) {
+                mAudioParamManager.setCloseSourceWithUsage(mConfig.usage);
+            }
+        }
+    }
+
     // Common WAV file setup function
-    bool setupWavFileHelper(WAVFile& wavFile, bool isRecordMode) {
+    bool setupWavFile(WAVFile& wavFile, bool isRecordMode) {
         size_t bytesPerSample = audio_bytes_per_sample(mConfig.format);
 
         if (isRecordMode) {
@@ -713,13 +728,24 @@ protected:
     }
 
     // Common progress reporting function for both recording and playback
-    bool reportProgress(const uint64_t totalBytesProcessed,
+    template <typename T>
+    bool reportProgress(const sp<T>& component,
+                        const uint64_t totalBytesProcessed,
                         const uint64_t bytesPerSecond,
-                        AudioComponentType operationType,
                         WAVFile* wavFile = nullptr) {
-        static uint64_t nextProgressReport = bytesPerSecond * kProgressReportInterval;
-        const char* operationTypeName = (operationType == AudioComponentType::AUDIO_RECORD) ? "Recording" : "Playing";
+        // Check if component is valid before proceeding
+        if (component == nullptr) {
+            return false;
+        }
 
+        const char* operationTypeName;
+        if constexpr (std::is_same_v<T, AudioRecord>) {
+            operationTypeName = "Recording";
+        } else if constexpr (std::is_same_v<T, AudioTrack>) {
+            operationTypeName = "Playing";
+        }
+
+        static uint64_t nextProgressReport = bytesPerSecond * kProgressReportInterval;
         if (totalBytesProcessed >= nextProgressReport) {
             printf("%s ... , processed %.2f seconds, %.2f MB\n", operationTypeName,
                    static_cast<float>(totalBytesProcessed) / bytesPerSecond,
@@ -727,8 +753,10 @@ protected:
             nextProgressReport += bytesPerSecond * kProgressReportInterval;
 
             // Update file header if it's a recording operation and wavFile is provided
-            if (wavFile && operationType == AudioComponentType::AUDIO_RECORD) {
-                wavFile->updateHeader();
+            if constexpr (std::is_same_v<T, AudioRecord>) {
+                if (wavFile) {
+                    wavFile->updateHeader();
+                }
             }
             return true;
         }
@@ -738,7 +766,7 @@ protected:
     // Signal handler for SIGINT (Ctrl+C)
     static void signalHandler(int signal) {
         if (signal == SIGINT) {
-            g_exitRequested.store(true);
+            sExitRequested.store(true);
         }
     }
 
@@ -797,47 +825,35 @@ public:
         WAVFile wavFile;
         sp<AudioRecord> audioRecord;
 
-        // Validate parameters and initialize AudioRecord/WAVFile
-        if (!setupWavFileHelper(wavFile, true) || !validateAudioParameters() || !initializeAudioRecord(audioRecord)) {
-            logError("Failed to setup WAV file or initialize AudioRecord");
+        // Validate parameters and setup WAVFile
+        if (!setupWavFile(wavFile, true) || !validateAudioParameters()) {
+            logError("Failed to setup WAV file or validate audio parameters");
+            return -1;
+        }
+
+        if (!initializeAudioRecord(audioRecord)) {
+            logError("Failed to initialize AudioRecord");
+            wavFile.close();
             return -1;
         }
 
         // Start recording
-        if (!startRecording(audioRecord)) {
+        if (!startAudioComponent(audioRecord)) {
             wavFile.close();
             return -1;
         }
 
         // Main recording loop
-        int32_t result = recordLoop(audioRecord, wavFile);
+        int32_t operationResult = recordLoop(audioRecord, wavFile);
 
         // Cleanup
-        if (audioRecord != nullptr) {
-            audioRecord->stop();
-        }
+        stopAudioComponent(audioRecord);
         wavFile.finalize();
 
-        return result;
+        return operationResult;
     }
 
 private:
-    bool initializeAudioRecord(sp<AudioRecord>& audioRecord) {
-        audio_channel_mask_t channelMask = audio_channel_in_mask_from_count(mConfig.channelCount);
-
-        if (AudioRecord::getMinFrameCount(&mConfig.minFrameCount, mConfig.sampleRate, mConfig.format, channelMask) !=
-            NO_ERROR) {
-            logWarning("Cannot get min frame count, using default value", nullptr);
-        }
-
-        const size_t frameCount = calculateFrameCount();
-        return initializeAudioRecordHelper(audioRecord, channelMask, frameCount);
-    }
-
-    bool startRecording(const sp<AudioRecord>& audioRecord) {
-        return startAudioComponent(audioRecord, AudioComponentType::AUDIO_RECORD);
-    }
-
     int32_t recordLoop(const sp<AudioRecord>& audioRecord, WAVFile& wavFile) {
         // Setup buffer
         BufferManager bufferManager(calculateBufferSize());
@@ -845,7 +861,7 @@ private:
             logError("Failed to create valid buffer manager");
             return -1;
         }
-        char* const buffer = bufferManager.get();
+        char* const audioBuffer = bufferManager.get();
 
         if (mConfig.durationSeconds > 0) {
             logInfo("Recording", String8::format("for %d seconds...", mConfig.durationSeconds).c_str());
@@ -860,8 +876,8 @@ private:
                 : static_cast<uint64_t>(kMaxAudioDataSize);
 
         uint64_t totalBytesRead = 0;
-        while (totalBytesRead < maxBytesToRecord && !g_exitRequested) {
-            const ssize_t bytesRead = audioRecord->read(buffer, calculateBufferSize());
+        while (totalBytesRead < maxBytesToRecord && !sExitRequested) {
+            const ssize_t bytesRead = audioRecord->read(audioBuffer, calculateBufferSize());
             if (bytesRead < 0) {
                 logError("AudioRecord read failed", String8::format("%zd", bytesRead).c_str());
                 break;
@@ -872,16 +888,16 @@ private:
             totalBytesRead += static_cast<uint64_t>(bytesRead);
 
             // Update level meter
-            updateLevelMeter(buffer, static_cast<size_t>(bytesRead));
+            updateLevelMeter(audioBuffer, static_cast<size_t>(bytesRead));
 
             // Write data to WAV file
-            if (wavFile.writeData(buffer, static_cast<size_t>(bytesRead)) != static_cast<size_t>(bytesRead)) {
+            if (wavFile.writeData(audioBuffer, static_cast<size_t>(bytesRead)) != static_cast<size_t>(bytesRead)) {
                 logError("Failed to save audio data to file");
                 break;
             }
 
             // Report progress
-            reportProgress(totalBytesRead, calculateBytesPerSecond(), AudioComponentType::AUDIO_RECORD, &wavFile);
+            reportProgress(audioRecord, totalBytesRead, calculateBytesPerSecond(), &wavFile);
         }
 
         logInfo("Recording finished",
@@ -901,43 +917,35 @@ public:
         WAVFile wavFile;
         sp<AudioTrack> audioTrack;
 
-        if (!setupWavFileHelper(wavFile, false) || !validateAudioParameters() || !initializeAudioTrack(audioTrack)) {
-            logError("Failed to setup WAV file or initialize AudioTrack");
+        // Validate parameters and setup WAVFile
+        if (!setupWavFile(wavFile, false) || !validateAudioParameters()) {
+            logError("Failed to setup WAV file or validate audio parameters");
+            return -1;
+        }
+
+        if (!initializeAudioTrack(audioTrack)) {
+            logError("Failed to initialize AudioTrack");
+            wavFile.close();
             return -1;
         }
 
         // Start playback
-        if (!startPlaying(audioTrack)) {
+        if (!startAudioComponent(audioTrack)) {
+            wavFile.close();
             return -1;
         }
 
         // Main playback loop
-        int32_t result = playLoop(audioTrack, wavFile);
+        int32_t operationResult = playLoop(audioTrack, wavFile);
 
         // Cleanup
-        if (audioTrack != nullptr) {
-            audioTrack->stop();
-            mParamManager.setCloseSourceWithUsage(mConfig.usage); // set params after AudioTrack.stop()
-        }
+        stopAudioComponent(audioTrack);
         wavFile.close();
 
-        return result;
+        return operationResult;
     }
 
 private:
-    bool initializeAudioTrack(sp<AudioTrack>& audioTrack) {
-        audio_channel_mask_t channelMask = audio_channel_out_mask_from_count(mConfig.channelCount);
-        const size_t frameCount = calculateFrameCount();
-        logInfo("AudioTrack initialized",
-                String8::format("minFrameCount: %zu, frameCount: %zu", mConfig.minFrameCount, frameCount).c_str());
-
-        return initializeAudioTrackHelper(audioTrack, channelMask, frameCount);
-    }
-
-    bool startPlaying(const sp<AudioTrack>& audioTrack) {
-        return startAudioComponent(audioTrack, AudioComponentType::AUDIO_TRACK);
-    }
-
     int32_t playLoop(const sp<AudioTrack>& audioTrack, WAVFile& wavFile) {
         // Setup buffer
         BufferManager bufferManager(calculateBufferSize());
@@ -945,12 +953,12 @@ private:
             logError("Failed to create valid buffer manager");
             return -1;
         }
-        char* const buffer = bufferManager.get();
+        char* const audioBuffer = bufferManager.get();
 
         logInfo("Playing audio from", mConfig.playFilePath.c_str());
         uint64_t totalBytesPlayed = 0;
-        while (!g_exitRequested) {
-            const size_t bytesRead = wavFile.readData(buffer, calculateBufferSize());
+        while (!sExitRequested) {
+            const size_t bytesRead = wavFile.readData(audioBuffer, calculateBufferSize());
             if (bytesRead == 0) {
                 logInfo("End of file reached", nullptr);
                 break;
@@ -959,7 +967,7 @@ private:
             size_t bytesWritten = 0;
             const size_t bytesToWrite = bytesRead;
             while (bytesWritten < bytesToWrite) {
-                const ssize_t written = audioTrack->write(buffer + bytesWritten, bytesToWrite - bytesWritten);
+                const ssize_t written = audioTrack->write(audioBuffer + bytesWritten, bytesToWrite - bytesWritten);
                 if (written < 0) {
                     logError("AudioTrack write failed", String8::format("%zd", written).c_str());
                     return -1;
@@ -970,10 +978,10 @@ private:
             totalBytesPlayed += static_cast<uint64_t>(bytesWritten);
 
             // Update level meter
-            updateLevelMeter(buffer, bytesRead);
+            updateLevelMeter(audioBuffer, bytesRead);
 
             // Report progress
-            reportProgress(totalBytesPlayed, calculateBytesPerSecond(), AudioComponentType::AUDIO_TRACK);
+            reportProgress(audioTrack, totalBytesPlayed, calculateBytesPerSecond());
         }
 
         logInfo("Playback finished", String8::format("Total bytes played: %lu", totalBytesPlayed).c_str());
@@ -993,67 +1001,47 @@ public:
         sp<AudioTrack> audioTrack;
 
         // Validate parameters and initialize audio components
-        if (!setupWavFileHelper(wavFile, true) || !validateAudioParameters() ||
-            !initializeAudioComponents(audioRecord, audioTrack)) {
-            logError("Failed to initialize audio components or setup WAV file");
+        if (!setupWavFile(wavFile, true) || !validateAudioParameters()) {
+            logError("Failed to setup WAV file or validate audio parameters");
+            return -1;
+        }
+
+        if (!initializeAudioRecord(audioRecord)) {
+            logError("Failed to initialize AudioRecord");
+            wavFile.close();
+            return -1;
+        }
+
+        if (!initializeAudioTrack(audioTrack)) {
+            logError("Failed to initialize AudioTrack");
+            // AudioRecord will be automatically cleaned up when it goes out of scope
+            wavFile.close();
             return -1;
         }
 
         // Start recording and playback
-        if (!startAudioComponents(audioRecord, audioTrack)) {
+        if (!startAudioComponent(audioRecord)) {
+            wavFile.close();
+            return -1;
+        }
+        if (!startAudioComponent(audioTrack)) {
+            stopAudioComponent(audioRecord);
             wavFile.close();
             return -1;
         }
 
         // Main duplex loop
-        int32_t result = duplexLoop(audioRecord, audioTrack, wavFile);
+        int32_t operationResult = duplexLoop(audioRecord, audioTrack, wavFile);
 
         // Cleanup
-        if (audioRecord != nullptr) {
-            audioRecord->stop();
-        }
-        if (audioTrack != nullptr) {
-            audioTrack->stop();
-            mParamManager.setCloseSourceWithUsage(mConfig.usage); // set params after AudioTrack.stop()
-        }
+        stopAudioComponent(audioRecord);
+        stopAudioComponent(audioTrack);
         wavFile.finalize();
 
-        return result;
+        return operationResult;
     }
 
 private:
-    bool initializeAudioComponents(sp<AudioRecord>& audioRecord, sp<AudioTrack>& audioTrack) {
-        audio_channel_mask_t channelMaskIn = audio_channel_in_mask_from_count(mConfig.channelCount);
-        audio_channel_mask_t channelMaskOut = audio_channel_out_mask_from_count(mConfig.channelCount);
-
-        if (AudioRecord::getMinFrameCount(&mConfig.minFrameCount, mConfig.sampleRate, mConfig.format, channelMaskIn) !=
-            NO_ERROR) {
-            logWarning("Cannot get min frame count, using default value", nullptr);
-        }
-
-        const size_t frameCount = calculateFrameCount();
-        if (!initializeAudioRecordHelper(audioRecord, channelMaskIn, frameCount) ||
-            !initializeAudioTrackHelper(audioTrack, channelMaskOut, frameCount)) {
-            return false;
-        }
-        return true;
-    }
-
-    bool startAudioComponents(const sp<AudioRecord>& audioRecord, const sp<AudioTrack>& audioTrack) {
-        if (!startAudioComponent(audioRecord, AudioComponentType::AUDIO_RECORD)) {
-            return false;
-        }
-
-        if (!startAudioComponent(audioTrack, AudioComponentType::AUDIO_TRACK)) {
-            if (audioRecord != nullptr) {
-                audioRecord->stop();
-            }
-            return false;
-        }
-
-        return true;
-    }
-
     int32_t duplexLoop(const sp<AudioRecord>& audioRecord, const sp<AudioTrack>& audioTrack, WAVFile& wavFile) {
         // Setup buffer
         BufferManager bufferManager(calculateBufferSize());
@@ -1061,7 +1049,7 @@ private:
             logError("Failed to create valid buffer manager");
             return -1;
         }
-        char* const buffer = bufferManager.get();
+        char* const audioBuffer = bufferManager.get();
 
         if (mConfig.durationSeconds > 0) {
             logInfo("Duplex audio started",
@@ -1078,8 +1066,8 @@ private:
 
         uint64_t totalBytesRead = 0;
         uint64_t totalBytesPlayed = 0;
-        while (totalBytesRead < maxBytesToRecord && !g_exitRequested) {
-            const ssize_t bytesRead = audioRecord->read(buffer, calculateBufferSize());
+        while (totalBytesRead < maxBytesToRecord && !sExitRequested) {
+            const ssize_t bytesRead = audioRecord->read(audioBuffer, calculateBufferSize());
             if (bytesRead < 0) {
                 logError("AudioRecord read failed", String8::format("%zd", bytesRead).c_str());
                 break;
@@ -1090,16 +1078,16 @@ private:
             totalBytesRead += static_cast<uint64_t>(bytesRead);
 
             // Update level meter for recording
-            updateLevelMeter(buffer, static_cast<size_t>(bytesRead));
+            updateLevelMeter(audioBuffer, static_cast<size_t>(bytesRead));
 
             // Write to WAV file
-            if (wavFile.writeData(buffer, static_cast<size_t>(bytesRead)) != static_cast<size_t>(bytesRead)) {
+            if (wavFile.writeData(audioBuffer, static_cast<size_t>(bytesRead)) != static_cast<size_t>(bytesRead)) {
                 logError("Failed to save audio data to file");
                 // break; // Continue playing if save failed
             }
 
             // Report progress for recording
-            reportProgress(totalBytesRead, calculateBytesPerSecond(), AudioComponentType::AUDIO_RECORD, &wavFile);
+            reportProgress(audioRecord, totalBytesRead, calculateBytesPerSecond(), &wavFile);
 
             // Check recording finish
             if (totalBytesRead >= maxBytesToRecord) {
@@ -1109,7 +1097,7 @@ private:
             size_t bytesWritten = 0;
             const size_t bytesToWrite = static_cast<size_t>(bytesRead);
             while (bytesWritten < bytesToWrite) {
-                const ssize_t written = audioTrack->write(buffer + bytesWritten, bytesToWrite - bytesWritten);
+                const ssize_t written = audioTrack->write(audioBuffer + bytesWritten, bytesToWrite - bytesWritten);
                 if (written < 0) {
                     logError("AudioTrack write failed", String8::format("%zd", written).c_str());
                     goto duplex_end;
@@ -1133,36 +1121,36 @@ private:
 class SetParamsOperation : public AudioOperation {
 public:
     explicit SetParamsOperation(const AudioConfig& config, const std::vector<int32_t>& params)
-        : AudioOperation(config), mParams(params) {}
+        : AudioOperation(config), mTargetParameters(params) {}
 
     int32_t execute() override {
-        printf("SetParams operation started with %zu parameters\n", mParams.size());
+        printf("SetParams operation started with %zu parameters\n", mTargetParameters.size());
 
-        for (size_t i = 0; i < mParams.size(); ++i) {
-            printf("  Parameter %zu: %d\n", i + 1, mParams[i]);
+        for (size_t i = 0; i < mTargetParameters.size(); ++i) {
+            printf("  Parameter %zu: %d\n", i + 1, mTargetParameters[i]);
         }
 
-        if (mParams.empty()) {
+        if (mTargetParameters.empty()) {
             printf("Error: No parameters provided\n");
             return -1;
         }
 
-        int32_t sourceType = mParams[0];
-        if (mParams.size() < 2) {
+        int32_t sourceType = mTargetParameters[0];
+        if (mTargetParameters.size() < 2) {
             printf("Error: Missing audio usage parameter\n");
             return -1;
         }
-        int32_t usageValue = mParams[1];
+        int32_t usageValue = mTargetParameters[1];
         audio_usage_t usage = static_cast<audio_usage_t>(usageValue);
 
         switch (sourceType) {
         case 1:
             printf("Setting open_source with usage: %d\n", usage);
-            mParamManager.setOpenSourceWithUsage(usage);
+            mAudioParamManager.setOpenSourceWithUsage(usage);
             break;
         case 2:
             printf("Setting close_source with usage: %d\n", usage);
-            mParamManager.setCloseSourceWithUsage(usage);
+            mAudioParamManager.setCloseSourceWithUsage(usage);
             break;
         default:
             printf("Error: Unknown primary parameter %d (1=open_source, 2=close_source)\n", sourceType);
@@ -1173,7 +1161,7 @@ public:
         return 0;
     }
 
-    std::vector<int32_t> mParams;
+    std::vector<int32_t> mTargetParameters;
 };
 
 /************************** Audio Operation Factory ******************************/
