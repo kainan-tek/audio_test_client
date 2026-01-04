@@ -30,7 +30,7 @@
 #define LOG_TAG "audio_test_client"
 
 #define AUDIO_TEST_CLIENT_VERSION "2.0.0"
-#define SET_PARAMS_ENABLE 1
+#define SET_PARAMS_ENABLE 0
 
 using namespace android;
 using android::content::AttributionSourceState;
@@ -508,7 +508,6 @@ public:
         setupSignalHandler();
     }
     virtual ~AudioOperation() = default;
-
     // Disable copy operations to prevent issues with configuration and audio parameters
     AudioOperation(const AudioOperation&) = delete;
     AudioOperation& operator=(const AudioOperation&) = delete;
@@ -516,13 +515,14 @@ public:
     virtual int32_t execute() = 0;
 
 protected:
-    AudioConfig mConfig;
-    AudioParameterManager mAudioParamManager;
     static constexpr uint32_t kMaxAudioDataSize = 2u * 1024u * 1024u * 1024u; // 2 GiB
     static constexpr uint32_t kProgressReportInterval = 10;                   // report progress every 10 seconds
-    static constexpr uint32_t kLevelMeterInterval = 30;                       // Update level meter every 30 frames
-    uint32_t mLevelMeterCounter = 0;                                          // For level meter updates
-    uint64_t mNextProgressReport = 0;                                         // For progress reporting
+    static constexpr uint32_t kLevelMeterInterval = 25;                       // Update level meter every 30 frames
+
+    AudioConfig mConfig;
+    AudioParameterManager mAudioParamManager;
+    uint32_t mLevelMeterCounter = 0;  // For level meter updates
+    uint64_t mNextProgressReport = 0; // For progress reporting
 
     // Calculate required buffer size based on audio configuration
     size_t calculateBufferSize() const {
