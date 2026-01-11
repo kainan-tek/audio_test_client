@@ -416,7 +416,7 @@ struct AudioConfig {
 };
 
 /************************** AudioMode Definitions ******************************/
-enum AudioMode { MODE_INVALID = -1, MODE_RECORD = 0, MODE_PLAY = 1, MODE_DUPLEX = 2, MODE_SET_PARAMS = 100 };
+enum AudioMode { MODE_INVALID = -1, MODE_RECORD = 0, MODE_PLAY = 1, MODE_LOOPBACK = 2, MODE_SET_PARAMS = 100 };
 
 /************************** Audio Parameter Manager ******************************/
 static const String8 PARAM_OPEN_SOURCE = String8("open_source");   // Open source parameter name
@@ -1013,18 +1013,18 @@ private:
     }
 };
 
-/************************** Audio Duplex Operation ******************************/
-class AudioDuplexOperation : public AudioOperation {
+/************************** Audio Loopback Operation ******************************/
+class AudioLoopbackOperation : public AudioOperation {
 public:
-    // Constructor for audio duplex (record + playback) operation
-    explicit AudioDuplexOperation(const AudioConfig& config) : AudioOperation(config) {}
-    ~AudioDuplexOperation() override = default;
+    // Constructor for audio loopback operation (record + playback)
+    explicit AudioLoopbackOperation(const AudioConfig& config) : AudioOperation(config) {}
+    ~AudioLoopbackOperation() override = default;
 
     // Disable copy operations (inherited from AudioOperation)
-    AudioDuplexOperation(const AudioDuplexOperation&) = delete;
-    AudioDuplexOperation& operator=(const AudioDuplexOperation&) = delete;
+    AudioLoopbackOperation(const AudioLoopbackOperation&) = delete;
+    AudioLoopbackOperation& operator=(const AudioLoopbackOperation&) = delete;
 
-    // Execute audio duplex operation (simultaneous recording and playback)
+    // Execute audio loopback operation (simultaneous recording and playback)
     int32_t execute() override {
         WAVFile wavFile;
         sp<AudioRecord> audioRecord;
@@ -1056,8 +1056,8 @@ public:
             return -1;
         }
 
-        // Main duplex loop
-        int32_t operationResult = duplexLoop(audioRecord, audioTrack, wavFile);
+        // Main loopback loop
+        int32_t operationResult = loopbackLoop(audioRecord, audioTrack, wavFile);
 
         // Cleanup
         stopAudioComponent(audioRecord);
@@ -1068,8 +1068,8 @@ public:
     }
 
 private:
-    // Main duplex loop for simultaneous recording and playback
-    int32_t duplexLoop(const sp<AudioRecord>& audioRecord, const sp<AudioTrack>& audioTrack, WAVFile& wavFile) {
+    // Main loopback loop for simultaneous recording and playback
+    int32_t loopbackLoop(const sp<AudioRecord>& audioRecord, const sp<AudioTrack>& audioTrack, WAVFile& wavFile) {
         // Setup buffer
         BufferManager bufferManager(calculateBufferSize());
         if (!bufferManager.isValid()) {
@@ -1138,7 +1138,7 @@ private:
             totalBytesPlayed += static_cast<uint64_t>(bytesWritten);
         }
 
-        printf("Duplex audio completed: Total bytes read: %" PRIu64 ", Total bytes played: %" PRIu64
+        printf("Loopback audio completed: Total bytes read: %" PRIu64 ", Total bytes played: %" PRIu64
                ", File saved: %s\n",
                totalBytesRead, totalBytesPlayed, wavFile.getFilePath().c_str());
 
@@ -1171,21 +1171,26 @@ public:
         }
 
         int32_t sourceType = mTargetParameters[0];
-        if (mTargetParameters.size() < 2) {
-            printf("Error: Missing audio usage parameter\n");
-            return -1;
-        }
-        int32_t usageValue = mTargetParameters[1];
-        audio_usage_t usage = static_cast<audio_usage_t>(usageValue);
-
         switch (sourceType) {
-        case 1:
-            printf("Setting open_source with usage: %d\n", usage);
-            mAudioParamManager.setOpenSourceWithUsage(usage);
+        case 1: // open_source
+            if (mTargetParameters.size() >= 2) {
+                int32_t usageValue = mTargetParameters[1];
+                audio_usage_t usage = static_cast<audio_usage_t>(usageValue);
+                printf("Setting open_source with usage: %d\n", usage);
+                mAudioParamManager.setOpenSourceWithUsage(usage);
+            } else {
+                printf("Error: Audio usage parameter is required for open_source\n");
+            }
             break;
-        case 2:
-            printf("Setting close_source with usage: %d\n", usage);
-            mAudioParamManager.setCloseSourceWithUsage(usage);
+        case 2: // close_source
+            if (mTargetParameters.size() >= 2) {
+                int32_t usageValue = mTargetParameters[1];
+                audio_usage_t usage = static_cast<audio_usage_t>(usageValue);
+                printf("Setting close_source with usage: %d\n", usage);
+                mAudioParamManager.setCloseSourceWithUsage(usage);
+            } else {
+                printf("Error: Audio usage parameter is required for close_source\n");
+            }
             break;
         default:
             printf("Error: Unknown primary parameter %d (1=open_source, 2=close_source)\n", sourceType);
@@ -1214,8 +1219,8 @@ public:
             return std::make_unique<AudioRecordOperation>(config);
         case MODE_PLAY:
             return std::make_unique<AudioPlayOperation>(config);
-        case MODE_DUPLEX:
-            return std::make_unique<AudioDuplexOperation>(config);
+        case MODE_LOOPBACK:
+            return std::make_unique<AudioLoopbackOperation>(config);
         case MODE_SET_PARAMS:
             return std::make_unique<SetParamsOperation>(config, config.setParams);
         default:
@@ -1235,9 +1240,7 @@ public:
     // Parse command line arguments and configure audio mode and parameters
     static void parseArguments(int32_t argc, char** argv, AudioMode& mode, AudioConfig& config) {
         int32_t opt = 0;
-        int32_t xParam = -1; // -x parameter for set params mode
-        int32_t yParam = -1; // -y parameter for set params mode
-        while ((opt = getopt(argc, argv, "m:s:r:c:f:F:u:C:O:z:d:h:x:y:")) != -1) {
+        while ((opt = getopt(argc, argv, "m:s:r:c:f:I:u:C:O:F:d:P:h:")) != -1) {
             switch (opt) {
             case 'm': // mode
                 mode = static_cast<AudioMode>(atoi(optarg));
@@ -1254,7 +1257,7 @@ public:
             case 'f': // format (map friendly numbers to audio_format_t)
                 config.format = AudioUtils::parseFormatOption(atoi(optarg));
                 break;
-            case 'F': // input flag
+            case 'I': // input flag
                 config.inputFlag = static_cast<audio_input_flags_t>(atoi(optarg));
                 break;
             case 'd': // recording duration in seconds
@@ -1269,21 +1272,14 @@ public:
             case 'O': // output flag
                 config.outputFlag = static_cast<audio_output_flags_t>(atoi(optarg));
                 break;
-            case 'z': // min frame count
+            case 'F': // min frame count
                 config.minFrameCount = atoi(optarg);
                 break;
-            case 'x': // first parameter for set params mode (1=open_source, 2=close_source)
-                if (mode == MODE_SET_PARAMS) {
-                    xParam = atoi(optarg);
-                } else {
-                    printf("Warning: -x option only valid in set params mode (-m 100)\n");
-                }
-                break;
-            case 'y': // second parameter for set params mode (audio usage value)
-                if (mode == MODE_SET_PARAMS) {
-                    yParam = atoi(optarg);
-                } else {
-                    printf("Warning: -y option only valid in set params mode (-m 100)\n");
+            case 'P': // audio file path (input for play, output for record/loopback)
+                if (mode == MODE_PLAY) {
+                    config.playFilePath = optarg;
+                } else if ((mode == MODE_RECORD) || (mode == MODE_LOOPBACK)) {
+                    config.recordFilePath = optarg;
                 }
                 break;
             case 'h': // help for use
@@ -1295,20 +1291,32 @@ public:
             }
         }
 
-        // Combine x and y parameters into setParams vector
-        if (mode == MODE_SET_PARAMS && xParam >= 1) {
-            config.setParams.push_back(xParam);
-            if (yParam >= 1) {
-                config.setParams.push_back(yParam);
+        // Parse setParams from remaining command line arguments if mode is MODE_SET_PARAMS
+        if (mode == MODE_SET_PARAMS) {
+            for (int32_t i = optind; i < argc; ++i) {
+                std::string argStr(argv[i]);
+                size_t start = 0;
+                size_t end = argStr.find(',');
+                while (end != std::string::npos) {
+                    if (end > start) {
+                        config.setParams.push_back(std::stoi(argStr.substr(start, end - start)));
+                    }
+                    start = end + 1;
+                    end = argStr.find(',', start);
+                }
+                // Handle the last token
+                if (start < argStr.length()) {
+                    config.setParams.push_back(std::stoi(argStr.substr(start)));
+                }
             }
-        }
-
-        // Get audio file path from remaining argument
-        if (optind < argc) {
-            if (mode == MODE_PLAY) {
-                config.playFilePath = argv[optind];
-            } else if ((mode == MODE_RECORD) || (mode == MODE_DUPLEX)) {
-                config.recordFilePath = argv[optind];
+        } else {
+            // Get audio file path from remaining argument for other modes
+            if (optind < argc) {
+                if (mode == MODE_PLAY) {
+                    config.playFilePath = argv[optind];
+                } else if ((mode == MODE_RECORD) || (mode == MODE_LOOPBACK)) {
+                    config.recordFilePath = argv[optind];
+                }
             }
         }
     }
@@ -1322,7 +1330,7 @@ Usage: audio_test_client -m{mode} [options] [audio_file]
 Modes:
   -m0   Record mode
   -m1   Play mode
-  -m2   Duplex mode (record and play simultaneously)
+  -m2   Loopback mode (record and play simultaneously, echo test)
   -m100 Set params mode (set audio parameters without playback/recording)
 
 Record Options:
@@ -1351,7 +1359,7 @@ Record Options:
                        3: AUDIO_FORMAT_PCM_32_BIT (32-bit PCM)
                        4: AUDIO_FORMAT_PCM_8_24_BIT (8-bit PCM with 24-bit padding)
                        6: AUDIO_FORMAT_PCM_24_BIT_PACKED (24-bit packed PCM)
-  -F{inputFlag}       Set audio input flag
+  -I{inputFlag}       Set audio input flag
                        0: AUDIO_INPUT_FLAG_NONE (No special input flag)
                        1: AUDIO_INPUT_FLAG_FAST (Fast input flag)
                        2: AUDIO_INPUT_FLAG_HW_HOTWORD (Hardware hotword input)
@@ -1364,7 +1372,6 @@ Record Options:
                        256: AUDIO_INPUT_FLAG_ULTRASOUND (Ultrasound input)
                        512: AUDIO_INPUT_FLAG_HOTWORD_TAP (Hotword tap input)
                        1024: AUDIO_INPUT_FLAG_HW_LOOKBACK (Hardware lookback input)
-  -z{minFrameCount}   Set min frame count (default: system selected)
   -d{duration}        Set recording duration(s) (0 = unlimited)
 
 Play Options:
@@ -1420,27 +1427,30 @@ Play Options:
                        262144: AUDIO_OUTPUT_FLAG_SPATIALIZER (Spatializer audio output)
                        524288: AUDIO_OUTPUT_FLAG_ULTRASOUND (Ultrasound audio output)
                        1048576: AUDIO_OUTPUT_FLAG_BIT_PERFECT (Bit perfect audio output)
-  -z{minFrameCount}   Set min frame count (default: system selected)
+
+Common Options:
+  -F{minFrameCount}   Set play/record min frame count (default: system selected)
+  -P{filePath}        Audio file path (input for play, output for record/loopback)
+  -h                  Show this help message
 
 Set Params Options:
-  -x{param1}          First parameter
+  Parameters format: audio_test_client -m100 param1[,param2[,param3...]]
+    param1            First parameter (required)
                        1: open_source
                        2: close_source
-  -y{param2}          Second parameter (audio usage)
+    param2            Second parameter (audio usage)
                        1: AUDIO_USAGE_MEDIA
                        2: AUDIO_USAGE_VOICE_COMMUNICATION
                        ... (see usage)
+    param3+           Additional parameters (reserved for future use)
 
 For more details, please refer to system/media/audio/include/system/audio-hal-enums.h
 
-General Options:
-  -h                  Show this help message
-
 Examples:
-  Record: audio_test_client -m0 -s1 -r48000 -c2 -f1 -F1 -z960 -d20
-  Play:   audio_test_client -m1 -u1 -C0 -O4 -z960 /data/audio_test.wav
-  Duplex: audio_test_client -m2 -s1 -r48000 -c2 -f1 -F1 -u1 -C0 -O4 -z960 -d20
-  SetParams: audio_test_client -m100 -x1 -y1
+  Record: audio_test_client -m 0 -s 1 -r 48000 -c 2 -f 1 -I 1 -F 960 -d 20 -P /data/audio_test.wav
+  Play:   audio_test_client -m 1 -u 1 -C 0 -O 4 -F 960 -P /data/audio_test.wav
+  Loopback: audio_test_client -m 2 -s 1 -r 48000 -c 2 -f 1 -I 1 -u 1 -C 0 -O 4 -F 960 -d 20 -P /data/audio_test.wav
+  SetParams: audio_test_client -m 100 1,1
 )";
         puts(helpText);
     }
