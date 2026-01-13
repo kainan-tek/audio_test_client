@@ -48,7 +48,7 @@ chmod 777 /data/audio_test_client
 audio_test_client -m<mode> [options] [audio_file]
 ```
 
-### 核心参数
+### Common参数
 
 | 参数 | 说明 | 默认值 |
 |-----|------|-------|
