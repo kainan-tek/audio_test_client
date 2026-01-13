@@ -65,7 +65,7 @@ audio_test_client -m<mode> [options] [audio_file]
 | `-r<rate>` | 采样率（8000/16000/48000） |
 | `-c<count>` | 通道数（1/2/4/8） |
 | `-f<format>` | 格式：1=PCM16, 2=PCM8, 3=PCM32 |
-| `-I<flag>` | 输入标志 |
+| `-I<flag>` | 输入标志: AUDIO_INPUT_FLAG_FAST, ...|
 | `-d<seconds>` | 录音时长（0=无限） |
 
 ### 播放参数 (-m1)
@@ -73,8 +73,8 @@ audio_test_client -m<mode> [options] [audio_file]
 | 参数 | 说明 |
 |-----|------|
 | `-u<usage>` | 用途类型（见下方枚举） |
-| `-C<type>` | 内容类型 |
-| `-O<flag>` | 输出标志 |
+| `-C<type>` | 内容类型: AUDIO_CONTENT_TYPE_MUSIC, ...|
+| `-O<flag>` | 输出标志: AUDIO_OUTPUT_FLAG_DEEP_BUFFER, ...|
 
 ### 参数设置模式 (-m100)
 
@@ -92,10 +92,10 @@ audio_test_client -m<mode> [options] [audio_file]
 
 | 值 | 说明 |
 |---|------|
-| 0 | 默认 |
-| 1 | 麦克风 |
-| 6 | 语音识别 |
-| 7 | 通话 |
+| 0 | 默认 (AUDIO_SOURCE_DEFAULT) |
+| 1 | 麦克风 (AUDIO_SOURCE_MIC) |
+| 6 | 语音识别 (AUDIO_SOURCE_VOICE_RECOGNITION) |
+| 7 | 通话 (AUDIO_SOURCE_VOICE_COMMUNICATION) |
 
 **用途类型 (`-u`)**
 
