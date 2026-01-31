@@ -2,11 +2,41 @@
 
 专业的 Android 系统级音频测试工具，基于 Native C++ 开发，支持多种音频操作模式和参数配置。
 
-## 📋 项目概述
+## 目录
 
-Audio Test Client 是一个功能强大的 Android 系统级音频测试工具，基于 Android AudioRecord 和 AudioTrack Native API 开发。该项目提供了完整的音频录制、播放、回环测试和系统参数配置功能，支持多种音频格式和配置选项，是音频系统开发和测试的专业工具。
+- [项目概述](#项目概述)
+- [主要特性](#主要特性)
+- [系统要求](#系统要求)
+- [安装部署](#安装部署)
+- [使用指南](#使用指南)
+- [参数详解](#参数详解)
+- [技术架构](#技术架构)
+- [性能指标](#性能指标)
+- [故障排除](#故障排除)
+- [开发指南](#开发指南)
+- [许可证](#许可证)
 
-## ✨ 主要特性
+## 项目概述
+
+Audio Test Client 是一个 Android 系统级音频测试工具，基于 Android AudioRecord 和 AudioTrack Native API 开发。该项目提供了完整的音频录制、播放、回环测试和系统参数配置功能，支持多种音频格式和配置选项，是音频系统开发和测试的专业工具。
+
+### 工作模式
+
+| 模式 | 参数 | 功能描述 | 应用场景 |
+|-----|------|----------|----------|
+| 录音模式 | `-m0` | 从指定音频源录制到 WAV 文件 | 音频采集、质量测试、延迟测量 |
+| 播放模式 | `-m1` | 播放 WAV 音频文件 | 音频输出测试、兼容性验证 |
+| 回环模式 | `-m2` | 同时录音和播放（实时回声测试） | 延迟测试、音频链路验证 |
+| 参数设置 | `-m100` | 配置音频系统参数 | 系统调优、参数验证 |
+
+### 音频格式支持
+
+- **采样率范围**: 8kHz - 192kHz
+- **声道配置**: 1-16声道
+- **位深度**: 8/16/24/32位PCM
+- **文件格式**: WAV (RIFF/WAVE)
+
+## 主要特性
 
 - **🎵 四种工作模式**: 录音、播放、回环测试、参数设置
 - **🔊 完整音频支持**: 支持1-16声道，8kHz-192kHz采样率
@@ -17,30 +47,14 @@ Audio Test Client 是一个功能强大的 Android 系统级音频测试工具�
 - **🎯 信号处理**: 优雅的信号处理机制，支持安全中断
 - **🏗️ 模块化设计**: 清晰的类层次结构和工厂模式
 
-## 🎵 工作模式
+## 系统要求
 
-### 模式概览
-| 模式 | 参数 | 功能描述 | 应用场景 |
-|-----|------|----------|----------|
-| 录音模式 | `-m0` | 从指定音频源录制到 WAV 文件 | 音频采集、质量测试、延迟测量 |
-| 播放模式 | `-m1` | 播放 WAV 音频文件 | 音频输出测试、兼容性验证 |
-| 回环模式 | `-m2` | 同时录音和播放（实时回声测试） | 延迟测试、音频链路验证 |
-| 参数设置 | `-m100` | 配置音频系统参数 | 系统调优、参数验证 |
+- **操作系统**: Android 系统 (API Level 21+)
+- **权限要求**: Root 权限 (推荐)
+- **开发环境**: Native 开发环境
+- **架构支持**: ARM64, ARM32
 
-### 音频格式支持
-
-**采样率范围**: 8kHz - 192kHz  
-**声道配置**: 1-16声道  
-**位深度**: 8/16/24/32位PCM  
-**文件格式**: WAV (RIFF/WAVE)
-
-## 🚀 快速开始
-
-### 系统要求
-
-- Android 系统 (API Level 21+)
-- Root 权限 (推荐)
-- Native 开发环境
+## 安装部署
 
 ### 环境准备
 
@@ -53,7 +67,7 @@ adb remount
 adb shell setenforce 0
 ```
 
-### 编译安装
+### 编译方式
 
 #### 使用 Android.bp (推荐)
 ```bash
@@ -83,7 +97,7 @@ make
 adb push audio_test_client /data/
 ```
 
-### 设置权限
+### 权限设置
 
 ```bash
 adb shell
@@ -91,38 +105,32 @@ cd /data
 chmod 755 audio_test_client
 ```
 
-## 📖 使用说明
+## 使用指南
 
-### 基本操作
+### 基本语法
+
+```bash
+audio_test_client -m<mode> [options] [audio_file]
+```
+
+### 快速开始
 
 #### 录音测试
 ```bash
-# 使用麦克风录制 10 秒 48kHz 立体声音频
-./audio_test_client -m0 -s1 -r48000 -c2 -f1 -d10 -P/data/test_record.wav
-
-# 自动生成文件名的录音
-./audio_test_client -m0 -s1 -r48000 -c2 -f1 -d10
-
-# 低延迟录音模式
-./audio_test_client -m0 -s1 -r48000 -c2 -f1 -I1 -d10
+# 使用麦克风录制48kHz双声道音频20秒
+./audio_test_client -m0 -s1 -r48000 -c2 -f1 -I0 -F960 -d20
 ```
 
 #### 播放测试
 ```bash
 # 播放指定的 WAV 文件
-./audio_test_client -m1 -u1 -C0 -O4 -P/data/test_record.wav
-
-# 使用特定缓冲区大小播放
-./audio_test_client -m1 -u1 -C0 -O4 -F960 -P/data/test_record.wav
-
-# 低延迟播放模式
-./audio_test_client -m1 -u1 -C0 -O4 -F480 -P/data/test_record.wav
+./audio_test_client -m1 -u1 -C0 -O0 -F960 -P/data/audio_test.wav
 ```
 
 #### 回环延迟测试
 ```bash
-# 录音和播放同时进行，测试音频延迟
-./audio_test_client -m2 -s1 -r48000 -c2 -f1 -I1 -u1 -C0 -O4 -F960 -d20 -P/data/loopback_test.wav
+# 同时录音和播放，测试音频延迟
+./audio_test_client -m2 -s1 -r48000 -c2 -f1 -I0 -u1 -C0 -O0 -F960 -d20
 ```
 
 #### 系统参数配置
@@ -134,12 +142,7 @@ chmod 755 audio_test_client
 ./audio_test_client -m100 2,1
 ```
 
-## 🔧 命令行参数详解
-
-### 基本语法
-```
-audio_test_client -m<mode> [options] [audio_file]
-```
+## 参数详解
 
 ### 通用参数
 
@@ -182,9 +185,9 @@ audio_test_client -m<mode> [options] [audio_file]
 | 2 | usage | 音频用途 | 见用途类型枚举表 |
 | 3+ | reserved | 预留扩展参数 | 待定义 |
 
-## 📚 枚举值参考
+### 枚举值参考
 
-### 音频输入源 (Audio Source)
+#### 音频输入源 (Audio Source)
 
 | 值 | 常量名 | 说明 | 适用场景 |
 |---|--------|------|----------|
@@ -199,7 +202,7 @@ audio_test_client -m<mode> [options] [audio_file]
 | 8 | AUDIO_SOURCE_REMOTE_SUBMIX | 远程子混音 | 系统音频捕获 |
 | 9 | AUDIO_SOURCE_UNPROCESSED | 未处理音频 | 原始音频采集 |
 
-### 音频用途类型 (Audio Usage)
+#### 音频用途类型 (Audio Usage)
 
 | 值 | 常量名 | 说明 | 音频特性 |
 |---|--------|------|----------|
@@ -219,7 +222,7 @@ audio_test_client -m<mode> [options] [audio_file]
 | 14 | AUDIO_USAGE_GAME | 游戏 | 游戏音效 |
 | 15 | AUDIO_USAGE_ASSISTANT | 语音助手 | AI 助手 |
 
-### 输入标志位 (Input Flags)
+#### 输入标志位 (Input Flags)
 
 | 值 | 常量名 | 说明 | 性能特性 |
 |---|--------|------|----------|
@@ -229,7 +232,7 @@ audio_test_client -m<mode> [options] [audio_file]
 | 4 | AUDIO_INPUT_FLAG_RAW | 原始音频输入 | 未处理 |
 | 8 | AUDIO_INPUT_FLAG_SYNC | 同步音频输入 | 精确同步 |
 
-### 输出标志位 (Output Flags)
+#### 输出标志位 (Output Flags)
 
 | 值 | 常量名 | 说明 | 性能特性 |
 |---|--------|------|----------|
@@ -239,7 +242,7 @@ audio_test_client -m<mode> [options] [audio_file]
 | 4 | AUDIO_OUTPUT_FLAG_FAST | 低延迟播放 | ~10-20ms |
 | 8 | AUDIO_OUTPUT_FLAG_DEEP_BUFFER | 深度缓冲 | 省电模式 |
 
-## 🏗️ 技术架构
+## 技术架构
 
 ### 类层次结构
 
@@ -292,15 +295,6 @@ AudioOperation (抽象基类)
 - **最低版本**: Android API Level 21
 - **目标架构**: ARM64, ARM32, x86, x86_64
 
-## 🔍 技术细节
-
-### AudioRecord/AudioTrack集成
-
-- 使用同步传输模式实现音频操作
-- 支持多种音频格式 (8/16/24/32位PCM)
-- 完整的错误处理机制
-- 音频焦点和参数管理
-
 ### 数据流架构
 
 ```
@@ -308,6 +302,13 @@ AudioOperation (抽象基类)
 播放: 存储设备 → WAVFile → BufferManager → AudioTrack
 回环: AudioRecord → BufferManager → AudioTrack + WAVFile
 ```
+
+### AudioRecord/AudioTrack集成
+
+- 使用同步传输模式实现音频操作
+- 支持多种音频格式 (8/16/24/32位PCM)
+- 完整的错误处理机制
+- 音频焦点和参数管理
 
 ### WAV文件支持
 
@@ -317,7 +318,7 @@ AudioOperation (抽象基类)
 - 位深度支持: 8/16/24/32位
 - 自动文件头更新和完整性检查
 
-## 📊 性能指标
+## 性能指标
 
 - **低延迟模式**: ~10-20ms (使用FAST标志)
 - **标准模式**: ~40-80ms
@@ -327,7 +328,7 @@ AudioOperation (抽象基类)
 - **位深度**: 8/16/24/32位
 - **最大文件**: 2GB WAV文件
 
-## 🐛 故障排除
+## 故障排除
 
 ### 常见问题
 
@@ -378,7 +379,7 @@ adb logcat -s audio_test_client
 adb logcat -s AudioFlinger AudioPolicyService
 ```
 
-## 📈 开发指南
+## 开发指南
 
 ### 构建要求
 
@@ -421,7 +422,16 @@ adb logcat -s AudioFlinger AudioPolicyService
 - 避免在音频线程中进行文件I/O
 - 使用MMAP模式提高性能
 
-## 📄 许可证
+### 代码结构
+
+项目采用模块化设计，主要包含以下文件：
+
+- `audio_test_client.cpp` - 主程序文件，包含所有核心功能
+- `Android.bp` - Soong构建配置文件
+- `Android.mk` - 传统Make构建配置文件
+- `CMakeLists.txt` - CMake构建配置文件
+
+## 许可证
 
 本项目采用 GNU General Public License v3.0 许可证。详细信息请参阅 [LICENSE](LICENSE) 文件。
 

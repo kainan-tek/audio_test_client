@@ -29,7 +29,7 @@
 
 #define LOG_TAG "audio_test_client"
 
-#define AUDIO_TEST_CLIENT_VERSION "2.0.0"
+#define AUDIO_TEST_CLIENT_VERSION "2.1.0"
 #define SET_PARAMS_ENABLE 0
 
 using namespace android;
@@ -1447,9 +1447,9 @@ Set Params Options:
 For more details, please refer to system/media/audio/include/system/audio-hal-enums.h
 
 Examples:
-  Record: audio_test_client -m0 -s1 -r48000 -c2 -f1 -I1 -F960 -d20 -P/data/audio_test.wav
-  Play:   audio_test_client -m1 -u1 -C0 -O4 -F960 -P/data/audio_test.wav
-  Loopback: audio_test_client -m2 -s1 -r48000 -c2 -f1 -I1 -u1 -C0 -O4 -F960 -d20 -P/data/audio_test.wav
+  Record: audio_test_client -m0 -s1 -r48000 -c2 -f1 -I0 -F960 -d20
+  Play:   audio_test_client -m1 -u1 -C0 -O0 -F960 -P/data/audio_test.wav
+  Loopback: audio_test_client -m2 -s1 -r48000 -c2 -f1 -I0 -u1 -C0 -O0 -F960 -d20
   SetParams: audio_test_client -m100 1,1
 )";
         puts(helpText);
