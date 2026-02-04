@@ -29,8 +29,8 @@
 
 #define LOG_TAG "audio_test_client"
 
-#define AUDIO_TEST_CLIENT_VERSION "2.1.0"
-#define SET_PARAMS_ENABLE 0
+#define AUDIO_TEST_CLIENT_VERSION "2.2.0"
+#define ENABLE_SET_PARAMS 0
 
 using namespace android;
 using android::content::AttributionSourceState;
@@ -319,6 +319,120 @@ private:
     AudioUtils() = delete;
 
 public:
+    // Convert audio_usage_t to audio_stream_type_t for legacy API compatibility
+    // Based on Android official compatibility mapping table:
+    // https://source.android.com/devices/audio/attributes
+    static audio_stream_type_t usageToStreamType(audio_usage_t usage) {
+        switch (usage) {
+        // -> STREAM_MUSIC
+        case AUDIO_USAGE_UNKNOWN:
+        case AUDIO_USAGE_MEDIA:
+        case AUDIO_USAGE_GAME:
+        case AUDIO_USAGE_ASSISTANCE_ACCESSIBILITY:
+        case AUDIO_USAGE_ASSISTANCE_NAVIGATION_GUIDANCE:
+            return AUDIO_STREAM_MUSIC;
+
+        // -> STREAM_VOICE_CALL
+        case AUDIO_USAGE_VOICE_COMMUNICATION:
+        case AUDIO_USAGE_VOICE_COMMUNICATION_SIGNALLING:
+            return AUDIO_STREAM_VOICE_CALL;
+
+        // -> STREAM_ALARM
+        case AUDIO_USAGE_ALARM:
+            return AUDIO_STREAM_ALARM;
+
+        // -> STREAM_RING
+        case AUDIO_USAGE_NOTIFICATION_TELEPHONY_RINGTONE:
+            return AUDIO_STREAM_RING;
+
+        // -> STREAM_NOTIFICATION
+        case AUDIO_USAGE_NOTIFICATION:
+        case AUDIO_USAGE_NOTIFICATION_COMMUNICATION_REQUEST:
+        case AUDIO_USAGE_NOTIFICATION_COMMUNICATION_INSTANT:
+        case AUDIO_USAGE_NOTIFICATION_COMMUNICATION_DELAYED:
+        case AUDIO_USAGE_NOTIFICATION_EVENT:
+            return AUDIO_STREAM_NOTIFICATION;
+
+        // -> STREAM_ASSISTANT
+        case AUDIO_USAGE_ASSISTANT:
+        case AUDIO_USAGE_CALL_ASSISTANT:
+            return AUDIO_STREAM_ASSISTANT;
+
+        // -> STREAM_SYSTEM (direct mapping)
+        case AUDIO_USAGE_ASSISTANCE_SONIFICATION:
+            return AUDIO_STREAM_SYSTEM;
+
+        // -> STREAM_MUSIC (semantic mapping, virtual source for media processing)
+        case AUDIO_USAGE_VIRTUAL_SOURCE:
+            printf("Warning: VIRTUAL_SOURCE usage mapped to STREAM_MUSIC (virtual audio processing)\n");
+            return AUDIO_STREAM_MUSIC;
+
+        // -> STREAM_SYSTEM (semantic mapping, automotive related)
+        case AUDIO_USAGE_EMERGENCY:
+        case AUDIO_USAGE_SAFETY:
+        case AUDIO_USAGE_VEHICLE_STATUS:
+        case AUDIO_USAGE_ANNOUNCEMENT:
+            // case AUDIO_USAGE_SPEAKER_CLEANUP:
+            printf("Warning: Usage %d has no direct stream type mapping, using STREAM_SYSTEM\n", usage);
+            return AUDIO_STREAM_SYSTEM;
+
+        // Default case
+        default:
+            printf("Warning: Unknown audio usage %d, defaulting to STREAM_MUSIC\n", usage);
+            return AUDIO_STREAM_MUSIC;
+        }
+    }
+
+    // Convert audio_usage_t to audio_content_type_t for proper audio attributes
+    // Based on Android official audio attributes mapping:
+    // https://source.android.com/devices/audio/attributes
+    static audio_content_type_t usageToContentType(audio_usage_t usage) {
+        switch (usage) {
+        // -> CONTENT_TYPE_MUSIC (media and entertainment)
+        case AUDIO_USAGE_UNKNOWN:
+        case AUDIO_USAGE_MEDIA:
+        case AUDIO_USAGE_GAME:
+            return AUDIO_CONTENT_TYPE_MUSIC;
+
+        // -> CONTENT_TYPE_SPEECH (voice communication and assistant)
+        case AUDIO_USAGE_VOICE_COMMUNICATION:
+        case AUDIO_USAGE_VOICE_COMMUNICATION_SIGNALLING:
+        case AUDIO_USAGE_ASSISTANT:
+        case AUDIO_USAGE_CALL_ASSISTANT:
+        case AUDIO_USAGE_ASSISTANCE_ACCESSIBILITY:
+        case AUDIO_USAGE_ASSISTANCE_NAVIGATION_GUIDANCE:
+            return AUDIO_CONTENT_TYPE_SPEECH;
+
+        // -> CONTENT_TYPE_SONIFICATION (system sounds and notifications)
+        case AUDIO_USAGE_ALARM:
+        case AUDIO_USAGE_NOTIFICATION:
+        case AUDIO_USAGE_NOTIFICATION_TELEPHONY_RINGTONE:
+        case AUDIO_USAGE_NOTIFICATION_COMMUNICATION_REQUEST:
+        case AUDIO_USAGE_NOTIFICATION_COMMUNICATION_INSTANT:
+        case AUDIO_USAGE_NOTIFICATION_COMMUNICATION_DELAYED:
+        case AUDIO_USAGE_NOTIFICATION_EVENT:
+        case AUDIO_USAGE_ASSISTANCE_SONIFICATION:
+            return AUDIO_CONTENT_TYPE_SONIFICATION;
+
+        // -> CONTENT_TYPE_SPEECH (virtual source, typically for processing)
+        case AUDIO_USAGE_VIRTUAL_SOURCE:
+            return AUDIO_CONTENT_TYPE_SPEECH;
+
+        // -> CONTENT_TYPE_SONIFICATION (automotive and emergency sounds)
+        case AUDIO_USAGE_EMERGENCY:
+        case AUDIO_USAGE_SAFETY:
+        case AUDIO_USAGE_VEHICLE_STATUS:
+        case AUDIO_USAGE_ANNOUNCEMENT:
+            // case AUDIO_USAGE_SPEAKER_CLEANUP:
+            return AUDIO_CONTENT_TYPE_SONIFICATION;
+
+        // Default case
+        default:
+            printf("Warning: Unknown audio usage %d, defaulting to CONTENT_TYPE_MUSIC\n", usage);
+            return AUDIO_CONTENT_TYPE_MUSIC;
+        }
+    }
+
     // Parse format option value to audio_format_t enum
     static audio_format_t parseFormatOption(const int v) {
         static const std::unordered_map<int, audio_format_t> formatMap = {{1, AUDIO_FORMAT_PCM_16_BIT},
@@ -407,7 +521,6 @@ struct AudioConfig {
 
     // Playback parameters
     audio_usage_t usage = AUDIO_USAGE_MEDIA;
-    audio_content_type_t contentType = AUDIO_CONTENT_TYPE_UNKNOWN;
     audio_output_flags_t outputFlag = AUDIO_OUTPUT_FLAG_NONE;
     std::string playFilePath = "/data/audio_test.wav";
 
@@ -452,7 +565,7 @@ private:
 
     // Unified interface for AudioSystem::setParameters
     void setSystemParameter(const String8& key, const String8& value) {
-#if SET_PARAMS_ENABLE
+#if ENABLE_SET_PARAMS
         AudioParameter audioParam;
         audioParam.add(key, value);
         String8 paramString = audioParam.toString();
@@ -463,7 +576,7 @@ private:
 
     // Unified interface for audioTrack->setParameters
     void setAudioTrackParameter(const sp<AudioTrack>& audioTrack, const String8& key, const String8& value) {
-#if SET_PARAMS_ENABLE
+#if ENABLE_SET_PARAMS
         AudioParameter audioParam;
         audioParam.add(key, value);
         String8 paramString = audioParam.toString();
@@ -475,6 +588,7 @@ private:
     // Convert audio_usage_t enum to string representation
     String8 audioUsageToString(audio_usage_t usage) {
         static const std::unordered_map<audio_usage_t, const char*> usageMap = {
+            // Basic usage types (Android 16 AUDIO_USAGE_LIST_NO_SYS_DEF)
             {AUDIO_USAGE_UNKNOWN, "AUDIO_USAGE_UNKNOWN"},
             {AUDIO_USAGE_MEDIA, "AUDIO_USAGE_MEDIA"},
             {AUDIO_USAGE_VOICE_COMMUNICATION, "AUDIO_USAGE_VOICE_COMMUNICATION"},
@@ -482,15 +596,26 @@ private:
             {AUDIO_USAGE_ALARM, "AUDIO_USAGE_ALARM"},
             {AUDIO_USAGE_NOTIFICATION, "AUDIO_USAGE_NOTIFICATION"},
             {AUDIO_USAGE_NOTIFICATION_TELEPHONY_RINGTONE, "AUDIO_USAGE_NOTIFICATION_TELEPHONY_RINGTONE"},
-            {AUDIO_USAGE_NOTIFICATION_COMMUNICATION_REQUEST, "AUDIO_USAGE_NOTIFICATION_COMMUNICATION_REQUEST"},
-            {AUDIO_USAGE_NOTIFICATION_COMMUNICATION_INSTANT, "AUDIO_USAGE_NOTIFICATION_COMMUNICATION_INSTANT"},
-            {AUDIO_USAGE_NOTIFICATION_COMMUNICATION_DELAYED, "AUDIO_USAGE_NOTIFICATION_COMMUNICATION_DELAYED"},
             {AUDIO_USAGE_NOTIFICATION_EVENT, "AUDIO_USAGE_NOTIFICATION_EVENT"},
             {AUDIO_USAGE_ASSISTANCE_ACCESSIBILITY, "AUDIO_USAGE_ASSISTANCE_ACCESSIBILITY"},
             {AUDIO_USAGE_ASSISTANCE_NAVIGATION_GUIDANCE, "AUDIO_USAGE_ASSISTANCE_NAVIGATION_GUIDANCE"},
             {AUDIO_USAGE_ASSISTANCE_SONIFICATION, "AUDIO_USAGE_ASSISTANCE_SONIFICATION"},
             {AUDIO_USAGE_GAME, "AUDIO_USAGE_GAME"},
+            {AUDIO_USAGE_VIRTUAL_SOURCE, "AUDIO_USAGE_VIRTUAL_SOURCE"},
             {AUDIO_USAGE_ASSISTANT, "AUDIO_USAGE_ASSISTANT"},
+            {AUDIO_USAGE_CALL_ASSISTANT, "AUDIO_USAGE_CALL_ASSISTANT"},
+
+            // System usage types (available when not AUDIO_NO_SYSTEM_DECLARATIONS)
+            {AUDIO_USAGE_NOTIFICATION_COMMUNICATION_REQUEST, "AUDIO_USAGE_NOTIFICATION_COMMUNICATION_REQUEST"},
+            {AUDIO_USAGE_NOTIFICATION_COMMUNICATION_INSTANT, "AUDIO_USAGE_NOTIFICATION_COMMUNICATION_INSTANT"},
+            {AUDIO_USAGE_NOTIFICATION_COMMUNICATION_DELAYED, "AUDIO_USAGE_NOTIFICATION_COMMUNICATION_DELAYED"},
+
+            // High-value usage types (Android Automotive and special scenarios)
+            {AUDIO_USAGE_EMERGENCY, "AUDIO_USAGE_EMERGENCY"},
+            {AUDIO_USAGE_SAFETY, "AUDIO_USAGE_SAFETY"},
+            {AUDIO_USAGE_VEHICLE_STATUS, "AUDIO_USAGE_VEHICLE_STATUS"},
+            {AUDIO_USAGE_ANNOUNCEMENT, "AUDIO_USAGE_ANNOUNCEMENT"},
+            // {AUDIO_USAGE_SPEAKER_CLEANUP, "AUDIO_USAGE_SPEAKER_CLEANUP"},
         };
         const char* usageName = "AUDIO_USAGE_UNKNOWN";
         const auto it = usageMap.find(usage);
@@ -623,6 +748,13 @@ protected:
     // Initialize AudioTrack with audio configuration
     bool initializeAudioTrack(sp<AudioTrack>& audioTrack) {
         audio_channel_mask_t channelMask = audio_channel_out_mask_from_count(mConfig.channelCount);
+
+        // Get minimum frame count using AudioTrack static method with streamType
+        // Since we use audio_attributes_t, we need to convert usage to streamType
+        audio_stream_type_t streamType = AudioUtils::usageToStreamType(mConfig.usage);
+        if (AudioTrack::getMinFrameCount(&mConfig.minFrameCount, streamType, mConfig.sampleRate) != NO_ERROR) {
+            printf("Warning: Cannot get min frame count using streamType, using default value\n");
+        }
         const size_t frameCount = calculateFrameCount();
 
         printf("Initialize AudioTrack: usage=%d, sampleRate=%d, channelCount=%d, format=%d, channelMask=0x%x, "
@@ -635,7 +767,7 @@ protected:
         AttributionSourceState attributionSource = createAttributionSource();
         audio_attributes_t attributes{};
         attributes.usage = mConfig.usage;
-        attributes.content_type = mConfig.contentType;
+        attributes.content_type = AudioUtils::usageToContentType(mConfig.usage);
         audioTrack = sp<AudioTrack>::make(attributionSource);
         if (audioTrack->set(AUDIO_STREAM_DEFAULT, // streamType
                             mConfig.sampleRate,   // sampleRate
@@ -1240,7 +1372,7 @@ public:
     // Parse command line arguments and configure audio mode and parameters
     static void parseArguments(int32_t argc, char** argv, AudioMode& mode, AudioConfig& config) {
         int32_t opt = 0;
-        while ((opt = getopt(argc, argv, "m:s:r:c:f:I:u:C:O:F:d:P:h:")) != -1) {
+        while ((opt = getopt(argc, argv, "m:s:r:c:f:I:u:O:F:d:P:h:")) != -1) {
             switch (opt) {
             case 'm': // mode
                 mode = static_cast<AudioMode>(atoi(optarg));
@@ -1265,9 +1397,6 @@ public:
                 break;
             case 'u': // audio usage
                 config.usage = static_cast<audio_usage_t>(atoi(optarg));
-                break;
-            case 'C': // audio content type
-                config.contentType = static_cast<audio_content_type_t>(atoi(optarg));
                 break;
             case 'O': // output flag
                 config.outputFlag = static_cast<audio_output_flags_t>(atoi(optarg));
@@ -1398,14 +1527,8 @@ Play Options:
                        1001: AUDIO_USAGE_SAFETY (Safety)
                        1002: AUDIO_USAGE_VEHICLE_STATUS (Vehicle status)
                        1003: AUDIO_USAGE_ANNOUNCEMENT (Announcement)
-                       1004: AUDIO_USAGE_SPEAKER_CLEANUP (Speaker cleanup)
-  -C{contentType}     Set content type
-                       0: AUDIO_CONTENT_TYPE_UNKNOWN (Unknown content type)
-                       1: AUDIO_CONTENT_TYPE_SPEECH (Speech)
-                       2: AUDIO_CONTENT_TYPE_MUSIC (Music)
-                       3: AUDIO_CONTENT_TYPE_MOVIE (Movie)
-                       4: AUDIO_CONTENT_TYPE_SONIFICATION (Sonification)
-                       1997: AUDIO_CONTENT_TYPE_ULTRASOUND (Ultrasound)
+                       // 1004: AUDIO_USAGE_SPEAKER_CLEANUP (Speaker cleanup)
+                       Note: Content type is automatically set based on usage type
   -O{outputFlag}      Set audio output flag
                        0: AUDIO_OUTPUT_FLAG_NONE (No special output flag)
                        1: AUDIO_OUTPUT_FLAG_DIRECT (Direct audio output)
@@ -1448,8 +1571,8 @@ For more details, please refer to system/media/audio/include/system/audio-hal-en
 
 Examples:
   Record: audio_test_client -m0 -s1 -r48000 -c2 -f1 -I0 -F960 -d20
-  Play:   audio_test_client -m1 -u1 -C0 -O0 -F960 -P/data/audio_test.wav
-  Loopback: audio_test_client -m2 -s1 -r48000 -c2 -f1 -I0 -u1 -C0 -O0 -F960 -d20
+  Play:   audio_test_client -m1 -u1 -O0 -F960 -P/data/audio_test.wav
+  Loopback: audio_test_client -m2 -s1 -r48000 -c2 -f1 -I0 -u1 -O0 -F960 -d20
   SetParams: audio_test_client -m100 1,1
 )";
         puts(helpText);

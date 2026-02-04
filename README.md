@@ -41,7 +41,7 @@ Audio Test Client 是一个 Android 系统级音频测试工具，基于 Android
 - **🎵 四种工作模式**: 录音、播放、回环测试、参数设置
 - **🔊 完整音频支持**: 支持1-16声道，8kHz-192kHz采样率
 - **🌟 Native层实现**: 基于C++17和Android Native API
-- **🔧 灵活配置**: 支持多种音频源、用途、格式和标志位
+- **🔧 智能配置**: 支持多种音频源、用途、格式，contentType自动映射
 - **📱 WAV文件支持**: 完整的WAV文件读写功能，支持PCM格式
 - **🛠️ 实时监控**: 提供详细的音频流状态和性能信息
 - **🎯 信号处理**: 优雅的信号处理机制，支持安全中断
@@ -123,14 +123,14 @@ audio_test_client -m<mode> [options] [audio_file]
 
 #### 播放测试
 ```bash
-# 播放指定的 WAV 文件
-./audio_test_client -m1 -u1 -C0 -O0 -F960 -P/data/audio_test.wav
+# 播放指定的 WAV 文件（contentType根据usage自动设置）
+./audio_test_client -m1 -u1 -O0 -F960 -P/data/audio_test.wav
 ```
 
 #### 回环延迟测试
 ```bash
-# 同时录音和播放，测试音频延迟
-./audio_test_client -m2 -s1 -r48000 -c2 -f1 -I0 -u1 -C0 -O0 -F960 -d20
+# 同时录音和播放，测试音频延迟（contentType自动设置）
+./audio_test_client -m2 -s1 -r48000 -c2 -f1 -I0 -u1 -O0 -F960 -d20
 ```
 
 #### 系统参数配置
@@ -169,8 +169,9 @@ audio_test_client -m<mode> [options] [audio_file]
 | 参数 | 类型 | 说明 | 可选值 | 示例 |
 |-----|------|------|-------|------|
 | `-u<usage>` | int | 音频用途类型 | 见用途类型枚举表 | `-u1` |
-| `-C<type>` | int | 内容类型 | 0=MUSIC, 1=SPEECH, 2=SONIFICATION, 3=MOVIE | `-C0` |
 | `-O<flag>` | int | 输出标志位 | 见输出标志枚举表 | `-O4` |
+
+**注意**: 内容类型(ContentType)会根据音频用途(Usage)自动设置，无需手动指定。
 
 ### 参数设置模式 (-m100)
 
@@ -221,6 +222,16 @@ audio_test_client -m<mode> [options] [audio_file]
 | 13 | AUDIO_USAGE_ASSISTANCE_SONIFICATION | 声音反馈 | 按键音 |
 | 14 | AUDIO_USAGE_GAME | 游戏 | 游戏音效 |
 | 15 | AUDIO_USAGE_ASSISTANT | 语音助手 | AI 助手 |
+
+#### 内容类型自动映射 (Content Type Auto-Mapping)
+
+内容类型会根据音频用途自动设置，无需手动指定：
+
+| 用途类型 | 自动映射的内容类型 | 说明 |
+|---------|------------------|------|
+| MEDIA, GAME, UNKNOWN | CONTENT_TYPE_MUSIC | 媒体和娱乐内容 |
+| VOICE_COMMUNICATION, ASSISTANT, ACCESSIBILITY, NAVIGATION | CONTENT_TYPE_SPEECH | 语音和通信内容 |
+| ALARM, NOTIFICATION, SONIFICATION, EMERGENCY | CONTENT_TYPE_SONIFICATION | 系统声音和提示 |
 
 #### 输入标志位 (Input Flags)
 
@@ -273,6 +284,8 @@ AudioOperation (抽象基类)
 - 采样率和通道数计算
 - 音频参数合法性检查
 - 时间戳和文件路径生成
+- **Usage到StreamType自动映射** (新增)
+- **Usage到ContentType自动映射** (新增)
 
 #### 4. 参数管理器 (AudioParameterManager)
 - 系统音频参数配置
@@ -293,7 +306,7 @@ AudioOperation (抽象基类)
 - **构建系统**: Android.bp (Soong) / Android.mk / CMake
 - **依赖库**: libmedia, libaudioclient, libutils, libbinder
 - **最低版本**: Android API Level 21
-- **目标架构**: ARM64, ARM32, x86, x86_64
+- **目标架构**: ARM64, ARM32
 
 ### 数据流架构
 
