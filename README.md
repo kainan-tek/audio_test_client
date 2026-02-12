@@ -1,5 +1,7 @@
 # Audio Test Client
 
+中文 | [English](README_EN.md)
+
 专业的 Android 系统级音频测试工具，基于 Native C++ 开发，支持多种音频操作模式和参数配置。
 
 ## 目录

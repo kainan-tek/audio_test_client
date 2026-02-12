@@ -1,6 +1,8 @@
 #include <algorithm>
 #include <atomic>
 #include <cinttypes>
+#include <cmath>
+#include <cstring>
 #include <fcntl.h>
 #include <fstream>
 #include <getopt.h>
@@ -79,11 +81,16 @@ public:
 
         // Read WAV header from input stream
         void read(std::istream& in) {
+            // Basic RIFF/WAVE header
             in.read(riffID, 4);
             in.read(reinterpret_cast<char*>(&riffSize), 4);
             in.read(waveID, 4);
+
+            // Read first chunk (expecting 'fmt ')
             in.read(fmtID, 4);
             in.read(reinterpret_cast<char*>(&fmtSize), 4);
+
+            // Read standard fmt fields (16 bytes)
             in.read(reinterpret_cast<char*>(&audioFormat), 2);
             in.read(reinterpret_cast<char*>(&numChannels), 2);
             in.read(reinterpret_cast<char*>(&sampleRate), 4);
@@ -247,21 +254,28 @@ public:
     int32_t getNumChannels() const { return header_.numChannels; }
     uint32_t getBitsPerSample() const { return header_.bitsPerSample; }
     audio_format_t getAudioFormat() const {
-        if (header_.audioFormat != 1) {
+        // WAV fmt audioFormat: 1 = PCM (integer), 3 = IEEE float
+        if (header_.audioFormat == 1) {
+            switch (header_.bitsPerSample) {
+            case 8:
+                return AUDIO_FORMAT_PCM_8_BIT;
+            case 16:
+                return AUDIO_FORMAT_PCM_16_BIT;
+            case 24:
+                return AUDIO_FORMAT_PCM_24_BIT_PACKED;
+            case 32:
+                return AUDIO_FORMAT_PCM_32_BIT;
+            default:
+                return AUDIO_FORMAT_INVALID;
+            }
+        } else if (header_.audioFormat == 3) {
+            // IEEE float WAV -- typically 32-bit float samples
+            if (header_.bitsPerSample == 32) {
+                return AUDIO_FORMAT_PCM_FLOAT;
+            }
             return AUDIO_FORMAT_INVALID;
         }
-        switch (header_.bitsPerSample) {
-        case 8:
-            return AUDIO_FORMAT_PCM_8_BIT;
-        case 16:
-            return AUDIO_FORMAT_PCM_16_BIT;
-        case 24:
-            return AUDIO_FORMAT_PCM_24_BIT_PACKED;
-        case 32:
-            return AUDIO_FORMAT_PCM_32_BIT;
-        default:
-            return AUDIO_FORMAT_INVALID;
-        }
+        return AUDIO_FORMAT_INVALID;
     }
 
 private:
@@ -435,15 +449,18 @@ public:
 
     // Parse format option value to audio_format_t enum
     static audio_format_t parseFormatOption(const int v) {
-        static const std::unordered_map<int, audio_format_t> formatMap = {{1, AUDIO_FORMAT_PCM_16_BIT},
-                                                                          {2, AUDIO_FORMAT_PCM_8_BIT},
-                                                                          {3, AUDIO_FORMAT_PCM_32_BIT},
-                                                                          {4, AUDIO_FORMAT_PCM_8_24_BIT},
-                                                                          {6, AUDIO_FORMAT_PCM_24_BIT_PACKED}};
-        const auto it = formatMap.find(v);
-        if (it != formatMap.end()) {
-            return it->second;
-        } else {
+        switch (v) {
+        case 1:
+            return AUDIO_FORMAT_PCM_16_BIT;
+        case 2:
+            return AUDIO_FORMAT_PCM_8_BIT;
+        case 3:
+            return AUDIO_FORMAT_PCM_32_BIT;
+        case 4:
+            return AUDIO_FORMAT_PCM_8_24_BIT;
+        case 6:
+            return AUDIO_FORMAT_PCM_24_BIT_PACKED;
+        default:
             printf("Error: format %d not found, using default format 16bit\n", v);
             return AUDIO_FORMAT_PCM_16_BIT;
         }
@@ -485,19 +502,20 @@ public:
         if (!overridePath.empty()) {
             return overridePath;
         }
-        // Safe version: use std::string to build path and avoid buffer overflow
+        // Use snprintf for efficient string formatting
         const std::string formatTime = AudioUtils::getFormatTime();
-        std::string audioFile = "/data/record_" + std::to_string(sampleRate) + "Hz_" + std::to_string(channelCount) +
-                                "ch_" + std::to_string(bitsPerSample) + "bit_" + formatTime + ".wav";
+        char buffer[256];
+        int bytesWritten = snprintf(buffer, sizeof(buffer), "/data/record_%dHz_%dch_%dbit_%s.wav", sampleRate,
+                                    channelCount, bitsPerSample, formatTime.c_str());
 
         // Ensure path length does not exceed filesystem limits
-        if (audioFile.length() >= 240) {
+        if (bytesWritten >= 240 || bytesWritten < 0) {
             // Path too long, use simplified format
-            audioFile = "/data/audio_" + std::string(formatTime) + ".wav";
+            snprintf(buffer, sizeof(buffer), "/data/audio_%s.wav", formatTime.c_str());
             printf("Warning: File path too long, using shortened name\n");
         }
 
-        return audioFile;
+        return std::string(buffer);
     }
 };
 
