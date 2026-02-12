@@ -735,7 +735,7 @@ protected:
                              channelMask,         // channel mask
                              frameCount,          // frame count
                              nullptr,             // callback/IAudioRecordCallback. use TRANSFER_CALLBACK
-#ifndef _INTERFACE_V2_
+#ifndef ANDROID_API_14_PLUS
                              nullptr, // user mCallbackData
 #endif
                              0,                          // notificationFrames
@@ -794,7 +794,7 @@ protected:
                             frameCount,           // frameCount
                             mConfig.outputFlag,   // outputFlag
                             nullptr,              // callback/IAudioTrackCallback. use TRANSFER_CALLBACK
-#ifndef _INTERFACE_V2_
+#ifndef ANDROID_API_14_PLUS
                             nullptr, // userCallbackData
 #endif
                             0,                         // notificationFrames

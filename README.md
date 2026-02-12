@@ -72,33 +72,27 @@ adb shell setenforce 0
 
 ### 编译方式
 
-#### 使用 Android.bp (推荐)
-```bash
-# 使用 Soong 构建系统
-m audio_test_client
-
-# 推送到设备
-adb push out/target/product/[device]/system/bin/audio_test_client /data/
-```
-
-#### 使用 Android.mk (传统方式)
+#### 使用 Android.mk (推荐)
 ```bash
 # 在 Android 源码环境中编译
+# 推荐使用此方式，可自动根据 PLATFORM_VERSION 选择正确的接口
 mm audio_test_client
 
 # 推送到设备
 adb push out/target/product/[device]/system/bin/audio_test_client /data/
 ```
 
-#### 使用 CMake (跨平台)
+#### 使用 Android.bp
 ```bash
-mkdir build && cd build
-cmake ..
-make
+# 在 Android 源码环境中使用 Soong 构建系统
+# 注意：默认为 Android 14+ 构建，如需支持旧版本需修改配置
+m audio_test_client
 
 # 推送到设备
-adb push audio_test_client /data/
+adb push out/target/product/[device]/system/bin/audio_test_client /data/
 ```
+
+**注意**: 本项目依赖 Android 系统库（libmedia、libaudioclient、libbinder 等），必须在 Android 源码树环境中编译。
 
 ### 权限设置
 
@@ -306,7 +300,7 @@ AudioOperation (抽象基类)
 
 - **语言**: C++17
 - **音频API**: Android AudioRecord/AudioTrack Native API
-- **构建系统**: Android.bp (Soong) / Android.mk / CMake
+- **构建系统**: Android.mk (推荐) / Android.bp (Soong)
 - **依赖库**: libmedia, libaudioclient, libutils, libbinder
 - **最低版本**: Android API Level 21
 - **目标架构**: ARM64, ARM32
@@ -402,7 +396,27 @@ adb logcat -s AudioFlinger AudioPolicyService
 - **Android SDK**: API Level 21+
 - **NDK**: r21+
 - **C++ 标准**: C++17
-- **构建系统**: Android.bp / Android.mk / CMake
+- **构建系统**: Android.mk (推荐) / Android.bp (Soong)
+
+### 平台版本兼容性
+
+项目支持 Android 14+ 的新接口，通过 `ANDROID_API_14_PLUS` 宏进行条件编译：
+
+**Android.mk 方式（推荐）**：
+- 自动检测 `PLATFORM_VERSION` (14/15/16)
+- 符合条件时自动定义 `ANDROID_API_14_PLUS`
+- 无需手动配置，自动适配不同 Android 版本
+
+**Android.bp 方式**：
+- 默认为 Android 14+ 构建（已定义 `ANDROID_API_14_PLUS`）
+- 如需支持旧版本，需手动修改配置文件
+- 可取消注释 `audio_test_client_legacy` 模块
+
+**接口差异**：
+- Android 14+：AudioRecord/AudioTrack 构造函数移除了 callback 相关参数
+- Android 13-：需要传递额外的 callback 参数（nullptr）
+
+**推荐使用 Android.mk**：能够根据编译时的平台版本自动选择正确的接口，无需手动干预。
 
 ### 依赖库
 
@@ -443,9 +457,8 @@ adb logcat -s AudioFlinger AudioPolicyService
 项目采用模块化设计，主要包含以下文件：
 
 - `audio_test_client.cpp` - 主程序文件，包含所有核心功能
+- `Android.mk` - Make构建配置文件（推荐，支持自动版本检测）
 - `Android.bp` - Soong构建配置文件
-- `Android.mk` - 传统Make构建配置文件
-- `CMakeLists.txt` - CMake构建配置文件
 
 ## 🔗 相关项目
 

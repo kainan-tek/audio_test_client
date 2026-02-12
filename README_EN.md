@@ -72,33 +72,27 @@ adb shell setenforce 0
 
 ### Build Methods
 
-#### Using Android.bp (Recommended)
-```bash
-# Use Soong build system
-m audio_test_client
-
-# Push to device
-adb push out/target/product/[device]/system/bin/audio_test_client /data/
-```
-
-#### Using Android.mk (Traditional)
+#### Using Android.mk (Recommended)
 ```bash
 # Build in Android source environment
+# Recommended: Automatically selects correct interface based on PLATFORM_VERSION
 mm audio_test_client
 
 # Push to device
 adb push out/target/product/[device]/system/bin/audio_test_client /data/
 ```
 
-#### Using CMake (Cross-platform)
+#### Using Android.bp
 ```bash
-mkdir build && cd build
-cmake ..
-make
+# Use Soong build system in Android source environment
+# Note: Defaults to Android 14+ build, modify config if older version support needed
+m audio_test_client
 
 # Push to device
-adb push audio_test_client /data/
+adb push out/target/product/[device]/system/bin/audio_test_client /data/
 ```
+
+**Note**: This project depends on Android system libraries (libmedia, libaudioclient, libbinder, etc.) and must be built within the Android source tree environment.
 
 ### Permission Setup
 
@@ -306,7 +300,7 @@ AudioOperation (Abstract Base Class)
 
 - **Language**: C++17
 - **Audio API**: Android AudioRecord/AudioTrack Native API
-- **Build System**: Android.bp (Soong) / Android.mk / CMake
+- **Build System**: Android.mk (Recommended) / Android.bp (Soong)
 - **Dependencies**: libmedia, libaudioclient, libutils, libbinder
 - **Minimum Version**: Android API Level 21
 - **Target Architecture**: ARM64, ARM32
@@ -402,7 +396,27 @@ adb logcat -s AudioFlinger AudioPolicyService
 - **Android SDK**: API Level 21+
 - **NDK**: r21+
 - **C++ Standard**: C++17
-- **Build System**: Android.bp / Android.mk / CMake
+- **Build System**: Android.mk (Recommended) / Android.bp (Soong)
+
+### Platform Version Compatibility
+
+The project supports Android 14+ new interfaces through conditional compilation using the `ANDROID_API_14_PLUS` macro:
+
+**Android.mk Method (Recommended)**:
+- Automatically detects `PLATFORM_VERSION` (14/15/16)
+- Defines `ANDROID_API_14_PLUS` when conditions are met
+- No manual configuration needed, automatically adapts to different Android versions
+
+**Android.bp Method**:
+- Defaults to Android 14+ build (with `ANDROID_API_14_PLUS` defined)
+- Requires manual config modification to support older versions
+- Can uncomment the `audio_test_client_legacy` module
+
+**Interface Differences**:
+- Android 14+: AudioRecord/AudioTrack constructors removed callback-related parameters
+- Android 13-: Requires additional callback parameters (nullptr)
+
+**Recommended to use Android.mk**: Automatically selects the correct interface based on the platform version at compile time, without manual intervention.
 
 ### Dependencies
 
@@ -443,9 +457,8 @@ adb logcat -s AudioFlinger AudioPolicyService
 The project uses modular design with the following main files:
 
 - `audio_test_client.cpp` - Main program file containing all core functionality
+- `Android.mk` - Make build configuration file (recommended, supports automatic version detection)
 - `Android.bp` - Soong build configuration file
-- `Android.mk` - Traditional Make build configuration file
-- `CMakeLists.txt` - CMake build configuration file
 
 ## 🔗 Related Projects
 
