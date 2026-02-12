@@ -16,6 +16,7 @@
 - [性能指标](#性能指标)
 - [故障排除](#故障排除)
 - [开发指南](#开发指南)
+- [相关项目](#相关项目)
 - [许可证](#许可证)
 
 ## 项目概述
@@ -445,6 +446,13 @@ adb logcat -s AudioFlinger AudioPolicyService
 - `Android.bp` - Soong构建配置文件
 - `Android.mk` - 传统Make构建配置文件
 - `CMakeLists.txt` - CMake构建配置文件
+
+## 🔗 相关项目
+
+- [**AudioRecorder**](https://github.com/kainan-tek/AudioRecorder) - 基于AudioRecord API的音频录制器应用
+- [**AAudioRecorder**](https://github.com/kainan-tek/AAudioRecorder) - 基于AAudio API的高性能录音器
+- [**AudioPlayer**](https://github.com/kainan-tek/AudioPlayer) - 基于AudioTrack API的音频播放器应用
+- [**AAudioPlayer**](https://github.com/kainan-tek/AAudioPlayer) - 基于AAudio API的高性能播放器
 
 ## 许可证
 

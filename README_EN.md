@@ -16,6 +16,7 @@ Professional Android system-level audio testing tool based on Native C++ develop
 - [Performance Metrics](#performance-metrics)
 - [Troubleshooting](#troubleshooting)
 - [Development Guide](#development-guide)
+- [Related Projects](#related-projects)
 - [License](#license)
 
 ## Overview
@@ -445,6 +446,13 @@ The project uses modular design with the following main files:
 - `Android.bp` - Soong build configuration file
 - `Android.mk` - Traditional Make build configuration file
 - `CMakeLists.txt` - CMake build configuration file
+
+## 🔗 Related Projects
+
+- [**AudioRecorder**](https://github.com/kainan-tek/AudioRecorder) - Audio recorder application based on AudioRecord API
+- [**AAudioRecorder**](https://github.com/kainan-tek/AAudioRecorder) - High-performance recorder based on AAudio API
+- [**AudioPlayer**](https://github.com/kainan-tek/AudioPlayer) - Audio player application based on AudioTrack API
+- [**AAudioPlayer**](https://github.com/kainan-tek/AAudioPlayer) - High-performance player based on AAudio API
 
 ## License
 
