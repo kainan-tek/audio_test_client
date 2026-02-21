@@ -262,6 +262,31 @@ AudioOperation (抽象基类)
 └── SetParamsOperation      (参数设置)
 ```
 
+### 架构图
+
+```
+┌─────────────────────────────────────────────────────┐
+│                   Utility Classes                  │
+├─────────────┬─────────────┬────────────┬────────────┤
+│  WAVFile    │ BufferManager│ AudioUtils │ SignalGuard│
+│ (文件I/O)   │ (缓冲区)     │ (工具函数) │ (信号处理) │
+└─────────────┴─────────────┴────────────┴────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────┐
+│              AudioOperation (基类)                 │
+│ - initializeAudioRecord/Track - startAudioComponent │
+│ - setupWavFileForRecording/Playback - updateLevelMeter │
+└─────────────────────────────────────────────────────┘
+                              │
+             ┌───────────────┼───────────────┐
+             ▼               ▼               ▼
+┌────────────────┐  ┌────────────────┐  ┌────────────────┐
+│ RecordOperation│  │ PlayOperation  │  │ LoopbackOperation│
+│ - recordLoop   │  │ - playLoop     │  │ - loopbackLoop │
+└────────────────┘  └────────────────┘  └────────────────┘
+```
+
 ### 核心组件
 
 #### 1. WAV 文件管理 (WAVFile)
@@ -281,8 +306,8 @@ AudioOperation (抽象基类)
 - 采样率和通道数计算
 - 音频参数合法性检查
 - 时间戳和文件路径生成
-- **Usage到StreamType自动映射** (新增)
-- **Usage到ContentType自动映射** (新增)
+- Usage到StreamType自动映射
+- Usage到ContentType自动映射
 
 #### 4. 参数管理器 (AudioParameterManager)
 - 系统音频参数配置
@@ -290,11 +315,22 @@ AudioOperation (抽象基类)
 - 音频源开关控制
 - 用途类型字符串转换
 
-#### 5. 命令行解析器 (CommandLineParser)
+#### 5. 信号守卫 (SignalGuard)
+- RAII风格的信号处理
+- 自动注册/注销SIGINT处理
+- 线程安全的退出标志
+- 支持优雅中断
+
+#### 6. 命令行解析器 (CommandLineParser)
 - 完整的参数解析和验证
 - 错误处理和帮助信息
 - 参数兼容性检查
 - 多参数格式支持
+
+#### 7. 操作工厂 (AudioOperationFactory)
+- 工厂模式创建操作对象
+- 根据模式自动选择操作类
+- 统一的对象创建接口
 
 ### 技术栈
 

@@ -262,6 +262,31 @@ AudioOperation (Abstract Base Class)
 └── SetParamsOperation      (Parameter Setting)
 ```
 
+### Architecture Diagram
+
+```
+┌─────────────────────────────────────────────────────┐
+│                   Utility Classes                  │
+├─────────────┬─────────────┬────────────┬────────────┤
+│  WAVFile    │ BufferManager│ AudioUtils │ SignalGuard│
+│ (File I/O)  │ (Buffer)     │ (Utils)    │ (Signal)   │
+└─────────────┴─────────────┴────────────┴────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────┐
+│              AudioOperation (Base Class)           │
+│ - initializeAudioRecord/Track - startAudioComponent │
+│ - setupWavFileForRecording/Playback - updateLevelMeter │
+└─────────────────────────────────────────────────────┘
+                              │
+             ┌───────────────┼───────────────┐
+             ▼               ▼               ▼
+┌────────────────┐  ┌────────────────┐  ┌────────────────┐
+│ RecordOperation│  │ PlayOperation  │  │ LoopbackOperation│
+│ - recordLoop   │  │ - playLoop     │  │ - loopbackLoop │
+└────────────────┘  └────────────────┘  └────────────────┘
+```
+
 ### Core Components
 
 #### 1. WAV File Management (WAVFile)
@@ -281,8 +306,8 @@ AudioOperation (Abstract Base Class)
 - Sample rate and channel count calculation
 - Audio parameter validity checking
 - Timestamp and file path generation
-- **Usage to StreamType auto-mapping** (New)
-- **Usage to ContentType auto-mapping** (New)
+- Usage to StreamType auto-mapping
+- Usage to ContentType auto-mapping
 
 #### 4. Parameter Manager (AudioParameterManager)
 - System audio parameter configuration
@@ -290,11 +315,22 @@ AudioOperation (Abstract Base Class)
 - Audio source on/off control
 - Usage type string conversion
 
-#### 5. Command Line Parser (CommandLineParser)
+#### 5. Signal Guard (SignalGuard)
+- RAII-style signal handling
+- Automatic SIGINT handler registration/deregistration
+- Thread-safe exit flag
+- Graceful interruption support
+
+#### 6. Command Line Parser (CommandLineParser)
 - Complete parameter parsing and validation
 - Error handling and help information
 - Parameter compatibility checking
 - Multi-parameter format support
+
+#### 7. Operation Factory (AudioOperationFactory)
+- Factory pattern for creating operation objects
+- Automatic operation class selection based on mode
+- Unified object creation interface
 
 ### Technology Stack
 
