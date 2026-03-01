@@ -37,7 +37,7 @@ Audio Test Client is an Android system-level audio testing tool based on Android
 - **Sample Rate Range**: 8kHz - 192kHz
 - **Channel Configuration**: 1-16 channels
 - **Bit Depth**: 8/16/24/32-bit PCM
-- **File Format**: WAV (RIFF/WAVE)
+- **File Formats**: WAV (.wav), Raw PCM (.pcm, .raw)
 
 ## Key Features
 
@@ -45,10 +45,11 @@ Audio Test Client is an Android system-level audio testing tool based on Android
 - **🔊 Complete Audio Support**: 1-16 channels, 8kHz-192kHz sample rates
 - **🌟 Native Layer Implementation**: Based on C++17 and Android Native API
 - **🔧 Smart Configuration**: Multiple audio sources, usages, formats with automatic contentType mapping
-- **📱 WAV File Support**: Complete WAV file read/write functionality with PCM format support
+- **📱 Multi-format File Support**: WAV and Raw PCM format read/write with automatic format detection
 - **🛠️ Real-time Monitoring**: Detailed audio stream status and performance information
 - **🎯 Signal Processing**: Graceful signal handling mechanism with safe interruption
 - **🏗️ Modular Design**: Clear class hierarchy and factory pattern
+- **⚡ Dual-thread Loopback**: Loopback mode uses producer-consumer architecture for reduced latency
 
 ## System Requirements
 
@@ -160,6 +161,17 @@ audio_test_client -m<mode> [options] [audio_file]
 | `-f<format>` | int | Audio format | 1=PCM16, 2=PCM8, 3=PCM32 | `-f1` |
 | `-I<flag>` | int | Input flags | See input flags enum table | `-I1` |
 | `-d<seconds>` | int | Recording duration (seconds) | 0=infinite | `-d10` |
+| `-T<type>` | int | Record file format | 0=WAV(default), 1=Raw PCM | `-T1` |
+| `-P<path>` | string | Record file path | Auto-generated or specified | `-P/data/test.wav` |
+
+**File Format Notes**:
+- `-T0` or omit `-T`: Save as WAV format (with header, contains audio parameter info)
+- `-T1`: Save as Raw PCM format (pure audio data, no header)
+
+**File Path and Format Priority**:
+- If `-P` specifies a path with extension (.wav/.pcm/.raw), format is determined by extension
+- If extension conflicts with `-T` parameter, extension takes priority and a notice is printed
+- If `-P` is not specified, filename is auto-generated with extension based on `-T` parameter
 
 ### Playback Mode Parameters (-m1)
 
@@ -167,6 +179,13 @@ audio_test_client -m<mode> [options] [audio_file]
 |-----------|------|-------------|--------------|---------|
 | `-u<usage>` | int | Audio usage type | See usage type enum table | `-u1` |
 | `-O<flag>` | int | Output flags | See output flags enum table | `-O4` |
+| `-P<path>` | string | Playback file path | Must be specified | `-P/data/test.wav` |
+
+**File Format Auto-Detection**:
+- Format is automatically detected based on file extension during playback
+  - `.wav` → WAV format
+  - `.pcm`, `.raw` → Raw PCM format
+- Raw PCM files require audio parameters to be specified via `-r`, `-c`, `-f` options (sample rate, channels, format)
 
 **Note**: ContentType is automatically set based on audio usage, no manual specification needed.
 
@@ -265,35 +284,40 @@ AudioOperation (Abstract Base Class)
 ### Architecture Diagram
 
 ```
-┌─────────────────────────────────────────────────────┐
-│                   Utility Classes                  │
-├─────────────┬─────────────┬────────────┬────────────┤
-│  WAVFile    │ BufferManager│ AudioUtils │ SignalGuard│
-│ (File I/O)  │ (Buffer)     │ (Utils)    │ (Signal)   │
-└─────────────┴─────────────┴────────────┴────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                      Utility Classes                            │
+├─────────────────┬─────────────────┬────────────┬────────────────┤
+│ AudioFileInterface│ BufferManager │ AudioUtils │  SignalGuard   │
+│  ├─ WavFile      │ (Buffer)       │ (Utils)    │  (Signal)      │
+│  └─ RawPcmFile   │                │            │                │
+├─────────────────┴─────────────────┴────────────┴────────────────┤
+│                    AudioFileFactory                              │
+│              (Format Detection & Creation)                       │
+└─────────────────────────────────────────────────────────────────┘
                               │
                               ▼
-┌─────────────────────────────────────────────────────┐
-│              AudioOperation (Base Class)           │
-│ - initializeAudioRecord/Track - startAudioComponent │
-│ - setupWavFileForRecording/Playback - updateLevelMeter │
-└─────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                AudioOperation (Base Class)                       │
+│ - initializeAudioRecord/Track - startAudioRecord/Track           │
+│ - setupAudioFileForRecording/Playback - updateLevelMeter        │
+└─────────────────────────────────────────────────────────────────┘
                               │
-             ┌───────────────┼───────────────┐
-             ▼               ▼               ▼
-┌────────────────┐  ┌────────────────┐  ┌────────────────┐
-│ RecordOperation│  │ PlayOperation  │  │ LoopbackOperation│
-│ - recordLoop   │  │ - playLoop     │  │ - loopbackLoop │
-└────────────────┘  └────────────────┘  └────────────────┘
+             ┌────────────────┼────────────────┐
+             ▼                ▼                ▼
+┌────────────────┐  ┌────────────────┐  ┌────────────────────┐
+│RecordOperation │  │ PlayOperation  │  │LoopbackOperation   │
+│ - recordLoop   │  │ - playLoop     │  │ - DualThread Arch  │
+└────────────────┘  └────────────────┘  │ - ThreadSafeQueue  │
+                                        └────────────────────┘
 ```
 
 ### Core Components
 
-#### 1. WAV File Management (WAVFile)
-- Complete WAV file header parsing and generation
-- PCM format read/write operations
-- Automatic byte order and data alignment handling
-- Large file support (up to 2GB)
+#### 1. Audio File Interface (AudioFileInterface)
+- Abstract interface for audio file operations
+- WAV and Raw PCM format implementations
+- Automatic format detection based on file extension
+- Factory pattern for file handler creation
 
 #### 2. Buffer Management (BufferManager)
 - Dynamic buffer allocation and management
@@ -344,9 +368,10 @@ AudioOperation (Abstract Base Class)
 ### Data Flow Architecture
 
 ```
-Recording: AudioRecord → BufferManager → WAVFile → Storage
-Playback: Storage → WAVFile → BufferManager → AudioTrack
-Loopback: AudioRecord → BufferManager → AudioTrack + WAVFile
+Recording: AudioRecord → BufferManager → AudioFileInterface → Storage
+Playback: Storage → AudioFileInterface → BufferManager → AudioTrack
+Loopback: AudioRecord → ThreadSafeQueue → AudioTrack
+                       └→ AudioFileInterface → Storage
 ```
 
 ### AudioRecord/AudioTrack Integration
@@ -356,13 +381,14 @@ Loopback: AudioRecord → BufferManager → AudioTrack + WAVFile
 - Complete error handling mechanism
 - Audio focus and parameter management
 
-### WAV File Support
+### Audio File Support
 
-- Standard RIFF/WAVE format parsing
+- WAV format: Standard RIFF/WAVE format with header
+- Raw PCM format: Pure audio data without header
+- Automatic format detection: Based on file extension (.wav/.pcm/.raw)
 - Multi-channel audio support (1-16 channels)
 - Sample rate range: 8kHz - 192kHz
 - Bit depth support: 8/16/24/32-bit
-- Automatic file header update and integrity checking
 
 ## Performance Metrics
 
@@ -492,7 +518,8 @@ The project supports Android 14+ new interfaces through conditional compilation 
 
 The project uses modular design with the following main files:
 
-- `audio_test_client.cpp` - Main program file containing all core functionality
+- `audio_test_client.h` - Header file containing class declarations and interface definitions
+- `audio_test_client.cpp` - Implementation file containing all core functionality implementations
 - `Android.mk` - Make build configuration file (recommended, supports automatic version detection)
 - `Android.bp` - Soong build configuration file
 

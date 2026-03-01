@@ -37,7 +37,7 @@ Audio Test Client 是一个 Android 系统级音频测试工具，基于 Android
 - **采样率范围**: 8kHz - 192kHz
 - **声道配置**: 1-16声道
 - **位深度**: 8/16/24/32位PCM
-- **文件格式**: WAV (RIFF/WAVE)
+- **文件格式**: WAV (.wav), Raw PCM (.pcm, .raw)
 
 ## 主要特性
 
@@ -45,10 +45,11 @@ Audio Test Client 是一个 Android 系统级音频测试工具，基于 Android
 - **🔊 完整音频支持**: 支持1-16声道，8kHz-192kHz采样率
 - **🌟 Native层实现**: 基于C++17和Android Native API
 - **🔧 智能配置**: 支持多种音频源、用途、格式，contentType自动映射
-- **📱 WAV文件支持**: 完整的WAV文件读写功能，支持PCM格式
+- **📱 多格式文件支持**: WAV和Raw PCM格式读写，自动格式检测
 - **🛠️ 实时监控**: 提供详细的音频流状态和性能信息
 - **🎯 信号处理**: 优雅的信号处理机制，支持安全中断
 - **🏗️ 模块化设计**: 清晰的类层次结构和工厂模式
+- **⚡ 双线程回环**: 回环模式采用生产者-消费者架构，降低延迟
 
 ## 系统要求
 
@@ -160,6 +161,17 @@ audio_test_client -m<mode> [options] [audio_file]
 | `-f<format>` | int | 音频格式 | 1=PCM16, 2=PCM8, 3=PCM32 | `-f1` |
 | `-I<flag>` | int | 输入标志位 | 见输入标志枚举表 | `-I1` |
 | `-d<seconds>` | int | 录音时长（秒） | 0=无限录音 | `-d10` |
+| `-T<type>` | int | 录音文件格式 | 0=WAV(默认), 1=Raw PCM | `-T1` |
+| `-P<path>` | string | 录音文件路径 | 自动生成或指定 | `-P/data/test.wav` |
+
+**文件格式说明**：
+- `-T0` 或不指定 `-T`：保存为 WAV 格式（带文件头，包含音频参数信息）
+- `-T1`：保存为 Raw PCM 格式（纯音频数据，无文件头）
+
+**文件路径与格式优先级**：
+- 如果 `-P` 指定的文件路径包含扩展名（.wav/.pcm/.raw），则根据扩展名决定文件格式
+- 如果扩展名与 `-T` 参数冲突，以扩展名为准并打印提示信息
+- 如果未指定 `-P`，则根据 `-T` 参数自动生成对应扩展名的文件名
 
 ### 播放模式参数 (-m1)
 
@@ -167,6 +179,11 @@ audio_test_client -m<mode> [options] [audio_file]
 |-----|------|------|-------|------|
 | `-u<usage>` | int | 音频用途类型 | 见用途类型枚举表 | `-u1` |
 | `-O<flag>` | int | 输出标志位 | 见输出标志枚举表 | `-O4` |
+| `-P<path>` | string | 播放文件路径 | 必须指定 | `-P/data/test.wav` |
+
+**文件格式自动识别**：
+- 播放时根据文件扩展名自动识别格式：.wav → WAV格式，.pcm/.raw → Raw PCM格式
+- Raw PCM 文件需要通过 `-r`、`-c`、`-f` 参数指定音频参数（采样率、声道数、格式）
 
 **注意**: 内容类型(ContentType)会根据音频用途(Usage)自动设置，无需手动指定。
 
@@ -265,35 +282,40 @@ AudioOperation (抽象基类)
 ### 架构图
 
 ```
-┌─────────────────────────────────────────────────────┐
-│                   Utility Classes                  │
-├─────────────┬─────────────┬────────────┬────────────┤
-│  WAVFile    │ BufferManager│ AudioUtils │ SignalGuard│
-│ (文件I/O)   │ (缓冲区)     │ (工具函数) │ (信号处理) │
-└─────────────┴─────────────┴────────────┴────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                      工具类 (Utility Classes)                    │
+├─────────────────┬─────────────────┬────────────┬────────────────┤
+│ AudioFileInterface│ BufferManager │ AudioUtils │  SignalGuard   │
+│  ├─ WavFile      │ (缓冲区)       │ (工具函数) │  (信号处理)   │
+│  └─ RawPcmFile   │                │            │                │
+├─────────────────┴─────────────────┴────────────┴────────────────┤
+│                    AudioFileFactory                              │
+│              (格式检测与创建)                                      │
+└─────────────────────────────────────────────────────────────────┘
                               │
                               ▼
-┌─────────────────────────────────────────────────────┐
-│              AudioOperation (基类)                 │
-│ - initializeAudioRecord/Track - startAudioComponent │
-│ - setupWavFileForRecording/Playback - updateLevelMeter │
-└─────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                AudioOperation (基类)                              │
+│ - initializeAudioRecord/Track - startAudioRecord/Track           │
+│ - setupAudioFileForRecording/Playback - updateLevelMeter        │
+└─────────────────────────────────────────────────────────────────┘
                               │
-             ┌───────────────┼───────────────┐
-             ▼               ▼               ▼
-┌────────────────┐  ┌────────────────┐  ┌────────────────┐
-│ RecordOperation│  │ PlayOperation  │  │ LoopbackOperation│
-│ - recordLoop   │  │ - playLoop     │  │ - loopbackLoop │
-└────────────────┘  └────────────────┘  └────────────────┘
+             ┌────────────────┼────────────────┐
+             ▼                ▼                ▼
+┌────────────────┐  ┌────────────────┐  ┌────────────────────┐
+│ RecordOperation│  │ PlayOperation  │  │ LoopbackOperation  │
+│ - recordLoop   │  │ - playLoop     │  │ - 双线程架构       │
+└────────────────┘  └────────────────┘  │ - ThreadSafeQueue  │
+                                         └────────────────────┘
 ```
 
 ### 核心组件
 
-#### 1. WAV 文件管理 (WAVFile)
-- 完整的 WAV 文件头解析和生成
-- 支持 PCM 格式的读写操作
-- 自动处理字节序和数据对齐
-- 支持大文件处理 (最大2GB)
+#### 1. 音频文件接口 (AudioFileInterface)
+- 抽象接口，定义统一的音频文件操作
+- WAV 和 Raw PCM 格式实现
+- 根据文件扩展名自动检测格式
+- 工厂模式创建文件处理器
 
 #### 2. 缓冲区管理 (BufferManager)
 - 动态缓冲区分配和管理
@@ -344,9 +366,10 @@ AudioOperation (抽象基类)
 ### 数据流架构
 
 ```
-录音: AudioRecord → BufferManager → WAVFile → 存储设备
-播放: 存储设备 → WAVFile → BufferManager → AudioTrack
-回环: AudioRecord → BufferManager → AudioTrack + WAVFile
+录音: AudioRecord → BufferManager → AudioFileInterface → 存储设备
+播放: 存储设备 → AudioFileInterface → BufferManager → AudioTrack
+回环: AudioRecord → ThreadSafeQueue → AudioTrack
+                        └→ AudioFileInterface → 存储设备
 ```
 
 ### AudioRecord/AudioTrack集成
@@ -356,13 +379,14 @@ AudioOperation (抽象基类)
 - 完整的错误处理机制
 - 音频焦点和参数管理
 
-### WAV文件支持
+### 音频文件支持
 
-- 标准RIFF/WAVE格式解析
+- WAV格式：标准RIFF/WAVE格式，包含文件头
+- Raw PCM格式：纯音频数据，无文件头
+- 自动格式检测：根据文件扩展名(.wav/.pcm/.raw)自动识别
 - 支持多声道音频 (1-16声道)
 - 采样率范围: 8kHz - 192kHz
 - 位深度支持: 8/16/24/32位
-- 自动文件头更新和完整性检查
 
 ## 性能指标
 
@@ -492,7 +516,8 @@ adb logcat -s AudioFlinger AudioPolicyService
 
 项目采用模块化设计，主要包含以下文件：
 
-- `audio_test_client.cpp` - 主程序文件，包含所有核心功能
+- `audio_test_client.h` - 头文件，包含类声明和接口定义
+- `audio_test_client.cpp` - 实现文件，包含所有核心功能的实现
 - `Android.mk` - Make构建配置文件（推荐，支持自动版本检测）
 - `Android.bp` - Soong构建配置文件
 
