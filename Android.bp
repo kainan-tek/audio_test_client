@@ -4,7 +4,7 @@
 // Default configuration for Android 14+ (modern platforms)
 cc_defaults {
     name: "audio_test_client_defaults",
-    
+
     // C++ standard
     cppflags: [
         "-std=c++17",
@@ -45,7 +45,7 @@ cc_binary {
     name: "audio_test_client",
     defaults: ["audio_test_client_defaults"],
     srcs: ["audio_test_client.cpp"],
-    
+
     cflags: [
         "-DANDROID_API_14_PLUS",
     ],
@@ -58,7 +58,7 @@ cc_binary {
     name: "audio_test_client_legacy",
     defaults: ["audio_test_client_defaults"],
     srcs: ["audio_test_client.cpp"],
-    
+
     // No ANDROID_API_14_PLUS flag for legacy versions
 }
 */

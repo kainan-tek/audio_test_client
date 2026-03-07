@@ -1,28 +1,35 @@
 ---
-# clang-format configuration for C++ code formatting
-BasedOnStyle: LLVM
+# clang-format configuration for Audio Test Client
+# Based on Google C++ Style Guide with project-specific customizations
+
+BasedOnStyle: Google
+
+# C++ Standard
+Standard: c++17
 
 # Indentation settings
 IndentWidth: 4
 TabWidth: 4
 UseTab: Never
-
-# C++ specific settings
-Standard: Cpp11
 AccessModifierOffset: -4
 
-# Brace settings
+# Line length (Google recommends 80, but project uses 120)
+ColumnLimit: 120
+
+# Brace settings (Google style)
 BreakBeforeBraces: Attach
 
-# Line length
-ColumnLimit: 120
+# Function and control flow
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
 
 # Function parameters
 AllowAllParametersOfDeclarationOnNextLine: true
 BinPackParameters: false
-
-# Other formatting options
 AlignAfterOpenBracket: Align
+
+# Alignment
 AlignConsecutiveAssignments: false
 AlignConsecutiveDeclarations: false
 AlignOperands: true
@@ -39,9 +46,11 @@ SpacesInSquareBrackets: false
 
 # Include sorting
 SortIncludes: true
+IncludeBlocks: Preserve
 
-# Pointer alignment
+# Pointer and reference alignment (Google style: left)
 PointerAlignment: Left
+DerivePointerAlignment: false
 
 # Constructor initialization
 ConstructorInitializerAllOnOneLineOrOnePerLine: true
@@ -49,3 +58,6 @@ ConstructorInitializerIndentWidth: 4
 
 # Namespaces
 NamespaceIndentation: None
+
+# Comments
+ReflowComments: true

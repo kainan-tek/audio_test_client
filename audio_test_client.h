@@ -16,8 +16,8 @@
 // This header file contains class declarations for audio recording, playback,
 // loopback testing, and system parameter configuration.
 
-#ifndef AUDIO_TEST_CLIENT_H
-#define AUDIO_TEST_CLIENT_H
+#ifndef AUDIO_TEST_CLIENT_H_
+#define AUDIO_TEST_CLIENT_H_
 
 // C system headers
 #include <fcntl.h>
@@ -59,7 +59,7 @@
 #include <utils/String8.h>
 
 #define LOG_TAG "audio_test_client"
-#define AUDIO_TEST_CLIENT_VERSION "2.5.0"
+#define AUDIO_TEST_CLIENT_VERSION "3.0.0"
 
 static constexpr bool kEnableSetParams = false;
 
@@ -240,7 +240,7 @@ private:
 public:
     static audio_stream_type_t usageToStreamType(audio_usage_t usage);
     static audio_content_type_t usageToContentType(audio_usage_t usage);
-    static audio_format_t parseFormatOption(const int v);
+    static audio_format_t parseFormatOption(int v);
     static std::string getFormatTime();
     static std::string getTimestamp();
     static std::string makeRecordFilePath(const int32_t sample_rate,
@@ -321,7 +321,13 @@ private:
 /************************** Thread Safe Buffer Queue ******************************/
 class ThreadSafeBufferQueue {
 public:
-    explicit ThreadSafeBufferQueue(size_t max_buffers = 16);
+    explicit ThreadSafeBufferQueue(size_t max_buffers = 16) : max_buffers_(max_buffers), stopped_(false) {}
+    ~ThreadSafeBufferQueue() = default;
+
+    ThreadSafeBufferQueue(const ThreadSafeBufferQueue&) = delete;
+    ThreadSafeBufferQueue& operator=(const ThreadSafeBufferQueue&) = delete;
+    ThreadSafeBufferQueue(ThreadSafeBufferQueue&&) = delete;
+    ThreadSafeBufferQueue& operator=(ThreadSafeBufferQueue&&) = delete;
 
     void push(std::vector<char>&& buffer);
     bool pop(std::vector<char>& buffer);
@@ -489,4 +495,4 @@ public:
     static void showHelp();
 };
 
-#endif // AUDIO_TEST_CLIENT_H
+#endif  // AUDIO_TEST_CLIENT_H_

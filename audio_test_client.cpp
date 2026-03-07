@@ -23,7 +23,9 @@
 
 /************************** WavFile Implementation ******************************/
 
-WavFile::~WavFile() noexcept { close(); }
+WavFile::~WavFile() noexcept {
+    close();
+}
 
 void WavFile::Header::write(std::ostream& out) const {
     out.write(riff_id, 4);
@@ -190,28 +192,40 @@ void WavFile::close() {
     }
 }
 
-const std::string& WavFile::getFilePath() const { return file_path_; }
-const WavFile::Header& WavFile::getHeader() const { return header_; }
-int32_t WavFile::getSampleRate() const { return static_cast<int32_t>(header_.sample_rate); }
-int32_t WavFile::getNumChannels() const { return static_cast<int32_t>(header_.num_channels); }
-uint32_t WavFile::getBitsPerSample() const { return header_.bits_per_sample; }
-bool WavFile::isOpen() const { return file_stream_.is_open(); }
+const std::string& WavFile::getFilePath() const {
+    return file_path_;
+}
+const WavFile::Header& WavFile::getHeader() const {
+    return header_;
+}
+int32_t WavFile::getSampleRate() const {
+    return static_cast<int32_t>(header_.sample_rate);
+}
+int32_t WavFile::getNumChannels() const {
+    return static_cast<int32_t>(header_.num_channels);
+}
+uint32_t WavFile::getBitsPerSample() const {
+    return header_.bits_per_sample;
+}
+bool WavFile::isOpen() const {
+    return file_stream_.is_open();
+}
 
 audio_format_t WavFile::getAudioFormat() const {
     if (header_.audio_format == 1) {
         // PCM format
         switch (header_.bits_per_sample) {
-        case 8:
-            return AUDIO_FORMAT_PCM_8_BIT;
-        case 16:
-            return AUDIO_FORMAT_PCM_16_BIT;
-        case 24:
-            return AUDIO_FORMAT_PCM_24_BIT_PACKED;
-        case 32:
-            return AUDIO_FORMAT_PCM_32_BIT;
-        default:
-            printf("Error: Unsupported PCM bit depth: %u\n", header_.bits_per_sample);
-            return AUDIO_FORMAT_INVALID;
+            case 8:
+                return AUDIO_FORMAT_PCM_8_BIT;
+            case 16:
+                return AUDIO_FORMAT_PCM_16_BIT;
+            case 24:
+                return AUDIO_FORMAT_PCM_24_BIT_PACKED;
+            case 32:
+                return AUDIO_FORMAT_PCM_32_BIT;
+            default:
+                printf("Error: Unsupported PCM bit depth: %u\n", header_.bits_per_sample);
+                return AUDIO_FORMAT_INVALID;
         }
     } else if (header_.audio_format == 3) {
         // IEEE float format - not supported by Android AudioTrack/AudioRecord
@@ -224,7 +238,9 @@ audio_format_t WavFile::getAudioFormat() const {
 
 /************************** RawPcmFile Implementation ******************************/
 
-RawPcmFile::~RawPcmFile() noexcept { close(); }
+RawPcmFile::~RawPcmFile() noexcept {
+    close();
+}
 
 bool RawPcmFile::createForWriting(const std::string& file_path,
                                   int32_t sample_rate,
@@ -269,24 +285,34 @@ void RawPcmFile::close() {
     }
 }
 
-const std::string& RawPcmFile::getFilePath() const { return file_path_; }
-int32_t RawPcmFile::getSampleRate() const { return sample_rate_; }
-int32_t RawPcmFile::getNumChannels() const { return num_channels_; }
-uint32_t RawPcmFile::getBitsPerSample() const { return bits_per_sample_; }
-bool RawPcmFile::isOpen() const { return file_stream_.is_open(); }
+const std::string& RawPcmFile::getFilePath() const {
+    return file_path_;
+}
+int32_t RawPcmFile::getSampleRate() const {
+    return sample_rate_;
+}
+int32_t RawPcmFile::getNumChannels() const {
+    return num_channels_;
+}
+uint32_t RawPcmFile::getBitsPerSample() const {
+    return bits_per_sample_;
+}
+bool RawPcmFile::isOpen() const {
+    return file_stream_.is_open();
+}
 
 audio_format_t RawPcmFile::getAudioFormat() const {
     switch (bits_per_sample_) {
-    case 8:
-        return AUDIO_FORMAT_PCM_8_BIT;
-    case 16:
-        return AUDIO_FORMAT_PCM_16_BIT;
-    case 24:
-        return AUDIO_FORMAT_PCM_24_BIT_PACKED;
-    case 32:
-        return AUDIO_FORMAT_PCM_32_BIT;
-    default:
-        return AUDIO_FORMAT_PCM_16_BIT;
+        case 8:
+            return AUDIO_FORMAT_PCM_8_BIT;
+        case 16:
+            return AUDIO_FORMAT_PCM_16_BIT;
+        case 24:
+            return AUDIO_FORMAT_PCM_24_BIT_PACKED;
+        case 32:
+            return AUDIO_FORMAT_PCM_32_BIT;
+        default:
+            return AUDIO_FORMAT_PCM_16_BIT;
     }
 }
 
@@ -300,12 +326,12 @@ void RawPcmFile::setAudioParameters(int32_t sample_rate, int32_t num_channels, u
 
 std::unique_ptr<AudioFileInterface> AudioFileFactory::create(AudioFileFormat format) {
     switch (format) {
-    case AudioFileFormat::kWav:
-        return std::make_unique<WavFile>();
-    case AudioFileFormat::kRawPcm:
-        return std::make_unique<RawPcmFile>();
-    default:
-        return nullptr;
+        case AudioFileFormat::kWav:
+            return std::make_unique<WavFile>();
+        case AudioFileFormat::kRawPcm:
+            return std::make_unique<RawPcmFile>();
+        default:
+            return nullptr;
     }
 }
 
@@ -325,22 +351,30 @@ AudioFileFormat AudioFileFactory::detectFormatFromPath(const std::string& file_p
 
 std::string AudioFileFactory::getDefaultExtension(AudioFileFormat format) {
     switch (format) {
-    case AudioFileFormat::kWav:
-        return ".wav";
-    case AudioFileFormat::kRawPcm:
-        return ".pcm";
-    default:
-        return ".wav";
+        case AudioFileFormat::kWav:
+            return ".wav";
+        case AudioFileFormat::kRawPcm:
+            return ".pcm";
+        default:
+            return ".wav";
     }
 }
 
 /************************** BufferManager Implementation ******************************/
 
-BufferManager::BufferManager(size_t buffer_size) { initializeBuffer(buffer_size); }
+BufferManager::BufferManager(size_t buffer_size) {
+    initializeBuffer(buffer_size);
+}
 
-char* BufferManager::get() const { return buffer_.get(); }
-size_t BufferManager::getSize() const { return size_; }
-bool BufferManager::isValid() const { return buffer_ != nullptr && size_ > 0; }
+char* BufferManager::get() const {
+    return buffer_.get();
+}
+size_t BufferManager::getSize() const {
+    return size_;
+}
+bool BufferManager::isValid() const {
+    return buffer_ != nullptr && size_ > 0;
+}
 
 void BufferManager::initializeBuffer(size_t requested_size) {
     static constexpr size_t kMinBufferSize = 480;
@@ -362,109 +396,109 @@ void BufferManager::initializeBuffer(size_t requested_size) {
 
 audio_stream_type_t AudioUtils::usageToStreamType(audio_usage_t usage) {
     switch (usage) {
-    case AUDIO_USAGE_UNKNOWN:
-    case AUDIO_USAGE_MEDIA:
-    case AUDIO_USAGE_GAME:
-    case AUDIO_USAGE_ASSISTANCE_ACCESSIBILITY:
-    case AUDIO_USAGE_ASSISTANCE_NAVIGATION_GUIDANCE:
-        return AUDIO_STREAM_MUSIC;
+        case AUDIO_USAGE_UNKNOWN:
+        case AUDIO_USAGE_MEDIA:
+        case AUDIO_USAGE_GAME:
+        case AUDIO_USAGE_ASSISTANCE_ACCESSIBILITY:
+        case AUDIO_USAGE_ASSISTANCE_NAVIGATION_GUIDANCE:
+            return AUDIO_STREAM_MUSIC;
 
-    case AUDIO_USAGE_VOICE_COMMUNICATION:
-    case AUDIO_USAGE_VOICE_COMMUNICATION_SIGNALLING:
-        return AUDIO_STREAM_VOICE_CALL;
+        case AUDIO_USAGE_VOICE_COMMUNICATION:
+        case AUDIO_USAGE_VOICE_COMMUNICATION_SIGNALLING:
+            return AUDIO_STREAM_VOICE_CALL;
 
-    case AUDIO_USAGE_ALARM:
-        return AUDIO_STREAM_ALARM;
+        case AUDIO_USAGE_ALARM:
+            return AUDIO_STREAM_ALARM;
 
-    case AUDIO_USAGE_NOTIFICATION_TELEPHONY_RINGTONE:
-        return AUDIO_STREAM_RING;
+        case AUDIO_USAGE_NOTIFICATION_TELEPHONY_RINGTONE:
+            return AUDIO_STREAM_RING;
 
-    case AUDIO_USAGE_NOTIFICATION:
-    case AUDIO_USAGE_NOTIFICATION_COMMUNICATION_REQUEST:
-    case AUDIO_USAGE_NOTIFICATION_COMMUNICATION_INSTANT:
-    case AUDIO_USAGE_NOTIFICATION_COMMUNICATION_DELAYED:
-    case AUDIO_USAGE_NOTIFICATION_EVENT:
-        return AUDIO_STREAM_NOTIFICATION;
+        case AUDIO_USAGE_NOTIFICATION:
+        case AUDIO_USAGE_NOTIFICATION_COMMUNICATION_REQUEST:
+        case AUDIO_USAGE_NOTIFICATION_COMMUNICATION_INSTANT:
+        case AUDIO_USAGE_NOTIFICATION_COMMUNICATION_DELAYED:
+        case AUDIO_USAGE_NOTIFICATION_EVENT:
+            return AUDIO_STREAM_NOTIFICATION;
 
-    case AUDIO_USAGE_ASSISTANT:
-    case AUDIO_USAGE_CALL_ASSISTANT:
-        return AUDIO_STREAM_ASSISTANT;
+        case AUDIO_USAGE_ASSISTANT:
+        case AUDIO_USAGE_CALL_ASSISTANT:
+            return AUDIO_STREAM_ASSISTANT;
 
-    case AUDIO_USAGE_ASSISTANCE_SONIFICATION:
-        return AUDIO_STREAM_SYSTEM;
+        case AUDIO_USAGE_ASSISTANCE_SONIFICATION:
+            return AUDIO_STREAM_SYSTEM;
 
-    case AUDIO_USAGE_VIRTUAL_SOURCE:
-        printf("Warning: VIRTUAL_SOURCE usage mapped to STREAM_MUSIC (virtual audio processing)\n");
-        return AUDIO_STREAM_MUSIC;
+        case AUDIO_USAGE_VIRTUAL_SOURCE:
+            printf("Warning: VIRTUAL_SOURCE usage mapped to STREAM_MUSIC (virtual audio processing)\n");
+            return AUDIO_STREAM_MUSIC;
 
-    case AUDIO_USAGE_EMERGENCY:
-    case AUDIO_USAGE_SAFETY:
-    case AUDIO_USAGE_VEHICLE_STATUS:
-    case AUDIO_USAGE_ANNOUNCEMENT:
-        printf("Warning: Usage %d has no direct stream type mapping, using STREAM_SYSTEM\n", usage);
-        return AUDIO_STREAM_SYSTEM;
+        case AUDIO_USAGE_EMERGENCY:
+        case AUDIO_USAGE_SAFETY:
+        case AUDIO_USAGE_VEHICLE_STATUS:
+        case AUDIO_USAGE_ANNOUNCEMENT:
+            printf("Warning: Usage %d has no direct stream type mapping, using STREAM_SYSTEM\n", usage);
+            return AUDIO_STREAM_SYSTEM;
 
-    default:
-        printf("Warning: Unknown audio usage %d, defaulting to STREAM_MUSIC\n", usage);
-        return AUDIO_STREAM_MUSIC;
+        default:
+            printf("Warning: Unknown audio usage %d, defaulting to STREAM_MUSIC\n", usage);
+            return AUDIO_STREAM_MUSIC;
     }
 }
 
 audio_content_type_t AudioUtils::usageToContentType(audio_usage_t usage) {
     switch (usage) {
-    case AUDIO_USAGE_UNKNOWN:
-    case AUDIO_USAGE_MEDIA:
-    case AUDIO_USAGE_GAME:
-        return AUDIO_CONTENT_TYPE_MUSIC;
+        case AUDIO_USAGE_UNKNOWN:
+        case AUDIO_USAGE_MEDIA:
+        case AUDIO_USAGE_GAME:
+            return AUDIO_CONTENT_TYPE_MUSIC;
 
-    case AUDIO_USAGE_VOICE_COMMUNICATION:
-    case AUDIO_USAGE_VOICE_COMMUNICATION_SIGNALLING:
-    case AUDIO_USAGE_ASSISTANT:
-    case AUDIO_USAGE_CALL_ASSISTANT:
-    case AUDIO_USAGE_ASSISTANCE_ACCESSIBILITY:
-    case AUDIO_USAGE_ASSISTANCE_NAVIGATION_GUIDANCE:
-        return AUDIO_CONTENT_TYPE_SPEECH;
+        case AUDIO_USAGE_VOICE_COMMUNICATION:
+        case AUDIO_USAGE_VOICE_COMMUNICATION_SIGNALLING:
+        case AUDIO_USAGE_ASSISTANT:
+        case AUDIO_USAGE_CALL_ASSISTANT:
+        case AUDIO_USAGE_ASSISTANCE_ACCESSIBILITY:
+        case AUDIO_USAGE_ASSISTANCE_NAVIGATION_GUIDANCE:
+            return AUDIO_CONTENT_TYPE_SPEECH;
 
-    case AUDIO_USAGE_ALARM:
-    case AUDIO_USAGE_NOTIFICATION:
-    case AUDIO_USAGE_NOTIFICATION_TELEPHONY_RINGTONE:
-    case AUDIO_USAGE_NOTIFICATION_COMMUNICATION_REQUEST:
-    case AUDIO_USAGE_NOTIFICATION_COMMUNICATION_INSTANT:
-    case AUDIO_USAGE_NOTIFICATION_COMMUNICATION_DELAYED:
-    case AUDIO_USAGE_NOTIFICATION_EVENT:
-    case AUDIO_USAGE_ASSISTANCE_SONIFICATION:
-        return AUDIO_CONTENT_TYPE_SONIFICATION;
+        case AUDIO_USAGE_ALARM:
+        case AUDIO_USAGE_NOTIFICATION:
+        case AUDIO_USAGE_NOTIFICATION_TELEPHONY_RINGTONE:
+        case AUDIO_USAGE_NOTIFICATION_COMMUNICATION_REQUEST:
+        case AUDIO_USAGE_NOTIFICATION_COMMUNICATION_INSTANT:
+        case AUDIO_USAGE_NOTIFICATION_COMMUNICATION_DELAYED:
+        case AUDIO_USAGE_NOTIFICATION_EVENT:
+        case AUDIO_USAGE_ASSISTANCE_SONIFICATION:
+            return AUDIO_CONTENT_TYPE_SONIFICATION;
 
-    case AUDIO_USAGE_VIRTUAL_SOURCE:
-        return AUDIO_CONTENT_TYPE_SPEECH;
+        case AUDIO_USAGE_VIRTUAL_SOURCE:
+            return AUDIO_CONTENT_TYPE_SPEECH;
 
-    case AUDIO_USAGE_EMERGENCY:
-    case AUDIO_USAGE_SAFETY:
-    case AUDIO_USAGE_VEHICLE_STATUS:
-    case AUDIO_USAGE_ANNOUNCEMENT:
-        return AUDIO_CONTENT_TYPE_SONIFICATION;
+        case AUDIO_USAGE_EMERGENCY:
+        case AUDIO_USAGE_SAFETY:
+        case AUDIO_USAGE_VEHICLE_STATUS:
+        case AUDIO_USAGE_ANNOUNCEMENT:
+            return AUDIO_CONTENT_TYPE_SONIFICATION;
 
-    default:
-        printf("Warning: Unknown audio usage %d, defaulting to CONTENT_TYPE_MUSIC\n", usage);
-        return AUDIO_CONTENT_TYPE_MUSIC;
+        default:
+            printf("Warning: Unknown audio usage %d, defaulting to CONTENT_TYPE_MUSIC\n", usage);
+            return AUDIO_CONTENT_TYPE_MUSIC;
     }
 }
 
 audio_format_t AudioUtils::parseFormatOption(const int v) {
     switch (v) {
-    case 1:
-        return AUDIO_FORMAT_PCM_16_BIT;
-    case 2:
-        return AUDIO_FORMAT_PCM_8_BIT;
-    case 3:
-        return AUDIO_FORMAT_PCM_32_BIT;
-    case 4:
-        return AUDIO_FORMAT_PCM_8_24_BIT;
-    case 6:
-        return AUDIO_FORMAT_PCM_24_BIT_PACKED;
-    default:
-        printf("Error: format %d not found, using default format 16bit\n", v);
-        return AUDIO_FORMAT_PCM_16_BIT;
+        case 1:
+            return AUDIO_FORMAT_PCM_16_BIT;
+        case 2:
+            return AUDIO_FORMAT_PCM_8_BIT;
+        case 3:
+            return AUDIO_FORMAT_PCM_32_BIT;
+        case 4:
+            return AUDIO_FORMAT_PCM_8_24_BIT;
+        case 6:
+            return AUDIO_FORMAT_PCM_24_BIT_PACKED;
+        default:
+            printf("Error: format %d not found, using default format 16bit\n", v);
+            return AUDIO_FORMAT_PCM_16_BIT;
     }
 }
 
@@ -523,9 +557,13 @@ SignalGuard::SignalGuard() {
     signal(SIGINT, signalHandler);
 }
 
-SignalGuard::~SignalGuard() noexcept { signal(SIGINT, SIG_DFL); }
+SignalGuard::~SignalGuard() noexcept {
+    signal(SIGINT, SIG_DFL);
+}
 
-bool SignalGuard::isExitRequested() const { return s_exit_requested_.load(); }
+bool SignalGuard::isExitRequested() const {
+    return s_exit_requested_.load();
+}
 
 void SignalGuard::signalHandler(int sig) {
     if (sig == SIGINT) {
@@ -608,8 +646,6 @@ android::String8 AudioParameterManager::audioUsageToString(audio_usage_t usage) 
 }
 
 /************************** ThreadSafeBufferQueue Implementation ******************************/
-
-ThreadSafeBufferQueue::ThreadSafeBufferQueue(size_t max_buffers) : max_buffers_(max_buffers), stopped_(false) {}
 
 void ThreadSafeBufferQueue::push(std::vector<char>&& buffer) {
     std::unique_lock<std::mutex> lock(mutex_);
@@ -705,12 +741,14 @@ bool AudioOperation::initializeAudioRecord(android::sp<android::AudioRecord>& au
     }
     const size_t frame_count = calculateFrameCount();
 
-    printf("Initialize AudioRecord: source=%d, sampleRate=%d, channelCount=%d, format=%d, channelMask=0x%x, "
-           "frameCount=%zu\n",
-           config_.input_source, config_.sample_rate, config_.channel_count, config_.format, channel_mask, frame_count);
-    ALOGI("Initialize AudioRecord: source=%d, sampleRate=%d, channelCount=%d, format=%d, channelMask=0x%x, "
-          "frameCount=%zu",
-          config_.input_source, config_.sample_rate, config_.channel_count, config_.format, channel_mask, frame_count);
+    printf(
+        "Initialize AudioRecord: source=%d, sampleRate=%d, channelCount=%d, format=%d, channelMask=0x%x, "
+        "frameCount=%zu\n",
+        config_.input_source, config_.sample_rate, config_.channel_count, config_.format, channel_mask, frame_count);
+    ALOGI(
+        "Initialize AudioRecord: source=%d, sampleRate=%d, channelCount=%d, format=%d, channelMask=0x%x, "
+        "frameCount=%zu",
+        config_.input_source, config_.sample_rate, config_.channel_count, config_.format, channel_mask, frame_count);
 
     android::content::AttributionSourceState attribution_source = createAttributionSource();
     audio_attributes_t attributes{};
@@ -747,12 +785,14 @@ bool AudioOperation::initializeAudioTrack(android::sp<android::AudioTrack>& audi
     }
     const size_t frame_count = calculateFrameCount();
 
-    printf("Initialize AudioTrack: usage=%d, sampleRate=%d, channelCount=%d, format=%d, channelMask=0x%x, "
-           "frameCount=%zu\n",
-           config_.usage, config_.sample_rate, config_.channel_count, config_.format, channel_mask, frame_count);
-    ALOGI("Initialize AudioTrack: usage=%d, sampleRate=%d, channelCount=%d, format=%d, channelMask=0x%x, "
-          "frameCount=%zu",
-          config_.usage, config_.sample_rate, config_.channel_count, config_.format, channel_mask, frame_count);
+    printf(
+        "Initialize AudioTrack: usage=%d, sampleRate=%d, channelCount=%d, format=%d, channelMask=0x%x, "
+        "frameCount=%zu\n",
+        config_.usage, config_.sample_rate, config_.channel_count, config_.format, channel_mask, frame_count);
+    ALOGI(
+        "Initialize AudioTrack: usage=%d, sampleRate=%d, channelCount=%d, format=%d, channelMask=0x%x, "
+        "frameCount=%zu",
+        config_.usage, config_.sample_rate, config_.channel_count, config_.format, channel_mask, frame_count);
 
     android::content::AttributionSourceState attribution_source = createAttributionSource();
     audio_attributes_t attributes{};
@@ -1213,7 +1253,7 @@ int32_t AudioLoopbackOperation::loopbackLoopDualThread(const android::sp<android
             audio_file.updateHeader();
         }
 
-        usleep(100000); // 100ms
+        usleep(100000);  // 100ms
     }
 
     buffer_queue_.stop();
@@ -1315,29 +1355,29 @@ int32_t SetParamsOperation::execute() {
 
         int32_t operation_type = target_params_[0];
         switch (operation_type) {
-        case 1:
-            if (target_params_.size() >= 2) {
-                int32_t usage_value = target_params_[1];
-                audio_usage_t usage = static_cast<audio_usage_t>(usage_value);
-                printf("Setting open_source with usage: %d\n", usage);
-                audio_param_manager_.setOpenSourceWithUsage(usage);
-            } else {
-                printf("Error: Audio usage parameter is required for open_source\n");
-            }
-            break;
-        case 2:
-            if (target_params_.size() >= 2) {
-                int32_t usage_value = target_params_[1];
-                audio_usage_t usage = static_cast<audio_usage_t>(usage_value);
-                printf("Setting close_source with usage: %d\n", usage);
-                audio_param_manager_.setCloseSourceWithUsage(usage);
-            } else {
-                printf("Error: Audio usage parameter is required for close_source\n");
-            }
-            break;
-        default:
-            printf("Error: Unknown primary parameter %d (1=open_source, 2=close_source)\n", operation_type);
-            return -1;
+            case 1:
+                if (target_params_.size() >= 2) {
+                    int32_t usage_value = target_params_[1];
+                    audio_usage_t usage = static_cast<audio_usage_t>(usage_value);
+                    printf("Setting open_source with usage: %d\n", usage);
+                    audio_param_manager_.setOpenSourceWithUsage(usage);
+                } else {
+                    printf("Error: Audio usage parameter is required for open_source\n");
+                }
+                break;
+            case 2:
+                if (target_params_.size() >= 2) {
+                    int32_t usage_value = target_params_[1];
+                    audio_usage_t usage = static_cast<audio_usage_t>(usage_value);
+                    printf("Setting close_source with usage: %d\n", usage);
+                    audio_param_manager_.setCloseSourceWithUsage(usage);
+                } else {
+                    printf("Error: Audio usage parameter is required for close_source\n");
+                }
+                break;
+            default:
+                printf("Error: Unknown primary parameter %d (1=open_source, 2=close_source)\n", operation_type);
+                return -1;
         }
 
         printf("SetParams operation completed\n");
@@ -1353,17 +1393,17 @@ int32_t SetParamsOperation::execute() {
 
 std::unique_ptr<AudioOperation> AudioOperationFactory::createOperation(AudioMode mode, const AudioConfig& config) {
     switch (mode) {
-    case AudioMode::kRecord:
-        return std::make_unique<AudioRecordOperation>(config);
-    case AudioMode::kPlay:
-        return std::make_unique<AudioPlayOperation>(config);
-    case AudioMode::kLoopback:
-        return std::make_unique<AudioLoopbackOperation>(config);
-    case AudioMode::kSetParams:
-        return std::make_unique<SetParamsOperation>(config, config.set_params);
-    default:
-        printf("Error: Invalid mode specified: %d\n", static_cast<int>(mode));
-        return nullptr;
+        case AudioMode::kRecord:
+            return std::make_unique<AudioRecordOperation>(config);
+        case AudioMode::kPlay:
+            return std::make_unique<AudioPlayOperation>(config);
+        case AudioMode::kLoopback:
+            return std::make_unique<AudioLoopbackOperation>(config);
+        case AudioMode::kSetParams:
+            return std::make_unique<SetParamsOperation>(config, config.set_params);
+        default:
+            printf("Error: Invalid mode specified: %d\n", static_cast<int>(mode));
+            return nullptr;
     }
 }
 
@@ -1373,52 +1413,52 @@ void CommandLineParser::parseArguments(int argc, char** argv, AudioMode& mode, A
     int32_t opt = 0;
     while ((opt = getopt(argc, argv, "m:s:r:c:f:I:u:O:F:d:P:T:h:")) != -1) {
         switch (opt) {
-        case 'm':
-            mode = static_cast<AudioMode>(atoi(optarg));
-            break;
-        case 's':
-            config.input_source = static_cast<audio_source_t>(atoi(optarg));
-            break;
-        case 'r':
-            config.sample_rate = atoi(optarg);
-            break;
-        case 'c':
-            config.channel_count = atoi(optarg);
-            break;
-        case 'f':
-            config.format = AudioUtils::parseFormatOption(atoi(optarg));
-            break;
-        case 'I':
-            config.input_flag = static_cast<audio_input_flags_t>(atoi(optarg));
-            break;
-        case 'd':
-            config.duration_seconds = atoi(optarg);
-            break;
-        case 'u':
-            config.usage = static_cast<audio_usage_t>(atoi(optarg));
-            break;
-        case 'O':
-            config.output_flag = static_cast<audio_output_flags_t>(atoi(optarg));
-            break;
-        case 'F':
-            config.min_frame_count = atoi(optarg);
-            break;
-        case 'P':
-            if (mode == AudioMode::kPlay) {
-                config.play_file_path = optarg;
-            } else if ((mode == AudioMode::kRecord) || (mode == AudioMode::kLoopback)) {
-                config.record_file_path = optarg;
-            }
-            break;
-        case 'T':
-            config.record_file_format = (atoi(optarg) == 1) ? AudioFileFormat::kRawPcm : AudioFileFormat::kWav;
-            break;
-        case 'h':
-            showHelp();
-            exit(0);
-        default:
-            showHelp();
-            exit(-1);
+            case 'm':
+                mode = static_cast<AudioMode>(atoi(optarg));
+                break;
+            case 's':
+                config.input_source = static_cast<audio_source_t>(atoi(optarg));
+                break;
+            case 'r':
+                config.sample_rate = atoi(optarg);
+                break;
+            case 'c':
+                config.channel_count = atoi(optarg);
+                break;
+            case 'f':
+                config.format = AudioUtils::parseFormatOption(atoi(optarg));
+                break;
+            case 'I':
+                config.input_flag = static_cast<audio_input_flags_t>(atoi(optarg));
+                break;
+            case 'd':
+                config.duration_seconds = atoi(optarg);
+                break;
+            case 'u':
+                config.usage = static_cast<audio_usage_t>(atoi(optarg));
+                break;
+            case 'O':
+                config.output_flag = static_cast<audio_output_flags_t>(atoi(optarg));
+                break;
+            case 'F':
+                config.min_frame_count = atoi(optarg);
+                break;
+            case 'P':
+                if (mode == AudioMode::kPlay) {
+                    config.play_file_path = optarg;
+                } else if ((mode == AudioMode::kRecord) || (mode == AudioMode::kLoopback)) {
+                    config.record_file_path = optarg;
+                }
+                break;
+            case 'T':
+                config.record_file_format = (atoi(optarg) == 1) ? AudioFileFormat::kRawPcm : AudioFileFormat::kWav;
+                break;
+            case 'h':
+                showHelp();
+                exit(0);
+            default:
+                showHelp();
+                exit(-1);
         }
     }
 
@@ -1487,7 +1527,7 @@ Record Options:
                        4: AUDIO_FORMAT_PCM_8_24_BIT (8-bit PCM with 24-bit padding)
                        6: AUDIO_FORMAT_PCM_24_BIT_PACKED (24-bit packed PCM)
   -I{inputFlag}       Set audio input flag (default: 0)
-                       0: NONE, 1: FAST, 4: RAW
+                       0: NONE, 1: FAST, 2: HW_HOTWORD, 4: RAW, 8: SYNC
                        (See audio-hal-enums.h for full list)
   -d{duration}        Set recording duration(s) (0 = unlimited)
   -T{fileFormat}      Record file format (default: 0)
@@ -1520,7 +1560,7 @@ Play Options:
                        1003: AUDIO_USAGE_ANNOUNCEMENT (Announcement)
                        Note: Content type is automatically set based on usage type
   -O{outputFlag}      Set audio output flag (default: 0)
-                       0: NONE, 1: DIRECT, 4: FAST, 8: DEEP_BUFFER
+                       0: NONE, 1: DIRECT, 2: PRIMARY, 4: FAST, 8: DEEP_BUFFER
                        (See audio-hal-enums.h for full list)
 
 Common Options:
