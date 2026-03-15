@@ -59,7 +59,7 @@
 #include <utils/String8.h>
 
 #define LOG_TAG "audio_test_client"
-#define AUDIO_TEST_CLIENT_VERSION "3.0.0"
+#define AUDIO_TEST_CLIENT_VERSION "3.1.0"
 
 static constexpr bool kEnableSetParams = false;
 
@@ -248,6 +248,7 @@ public:
                                           const uint32_t bits_per_sample,
                                           const std::string& override_path,
                                           AudioFileFormat format = AudioFileFormat::kWav);
+    static std::vector<int32_t> parseIntList(const std::string& str);
 };
 
 /************************** Signal Guard (RAII) ******************************/
@@ -262,9 +263,10 @@ public:
     SignalGuard& operator=(SignalGuard&&) = delete;
 
     bool isExitRequested() const;
+    void requestExit();
 
 private:
-    static inline std::atomic<bool> s_exit_requested_{false};
+    static volatile sig_atomic_t s_exit_requested_;
     static void signalHandler(int sig);
 };
 
@@ -358,7 +360,7 @@ public:
     virtual int32_t execute() = 0;
 
 protected:
-    static constexpr uint32_t kMaxAudioDataSize = 2u * 1024u * 1024u * 1024u;
+    static constexpr uint64_t kMaxAudioDataSize = 0xFFFFFFFFu;  // ~4GB, WAV format limit (uint32_t max)
     static constexpr uint32_t kProgressReportInterval = 10;
     static constexpr uint32_t kLevelMeterInterval = 25;
 
@@ -452,11 +454,8 @@ private:
     int32_t loopbackLoopDualThread(const android::sp<android::AudioRecord>& audio_record,
                                    const android::sp<android::AudioTrack>& audio_track,
                                    AudioFileInterface& audio_file);
-    void recordThread(const android::sp<android::AudioRecord>& audio_record,
-                      size_t buffer_size,
-                      uint64_t max_bytes,
-                      AudioFileInterface* audio_file);
-    void playThread(const android::sp<android::AudioTrack>& audio_track, size_t buffer_size);
+    void recordThread(const android::sp<android::AudioRecord>& audio_record, AudioFileInterface* audio_file);
+    void playThread(const android::sp<android::AudioTrack>& audio_track);
 };
 
 /************************** Set Parameters Operation ******************************/

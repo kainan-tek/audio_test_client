@@ -550,10 +550,39 @@ std::string AudioUtils::makeRecordFilePath(const int32_t sample_rate,
     return std::string(buffer);
 }
 
+std::vector<int32_t> AudioUtils::parseIntList(const std::string& str) {
+    std::vector<int32_t> result;
+    size_t start = 0;
+    size_t end = str.find(',');
+    while (end != std::string::npos) {
+        if (end > start) {
+            try {
+                result.emplace_back(std::stoi(str.substr(start, end - start)));
+            } catch (const std::exception& e) {
+                printf("Error: Failed to parse parameter '%s': %s\n", str.substr(start, end - start).c_str(), e.what());
+                return {};
+            }
+        }
+        start = end + 1;
+        end = str.find(',', start);
+    }
+    if (start < str.length()) {
+        try {
+            result.emplace_back(std::stoi(str.substr(start)));
+        } catch (const std::exception& e) {
+            printf("Error: Failed to parse parameter '%s': %s\n", str.substr(start).c_str(), e.what());
+            return {};
+        }
+    }
+    return result;
+}
+
 /************************** SignalGuard Implementation ******************************/
 
+volatile sig_atomic_t SignalGuard::s_exit_requested_ = 0;
+
 SignalGuard::SignalGuard() {
-    s_exit_requested_.store(false);
+    s_exit_requested_ = 0;
     signal(SIGINT, signalHandler);
 }
 
@@ -562,12 +591,17 @@ SignalGuard::~SignalGuard() noexcept {
 }
 
 bool SignalGuard::isExitRequested() const {
-    return s_exit_requested_.load();
+    return s_exit_requested_ != 0;
+}
+
+void SignalGuard::requestExit() {
+    s_exit_requested_ = 1;
 }
 
 void SignalGuard::signalHandler(int sig) {
+    // Only use async-signal-safe operations here
     if (sig == SIGINT) {
-        s_exit_requested_.store(true);
+        s_exit_requested_ = 1;
     }
 }
 
@@ -713,12 +747,24 @@ uint64_t AudioOperation::calculateBytesPerSecond() const {
 }
 
 bool AudioOperation::validateAudioParameters() const {
-    if (config_.sample_rate <= 0 || config_.channel_count <= 0) {
-        printf("Error: Invalid sample rate or channel count\n");
+    // Validate sample rate (8000 ~ 192000 Hz)
+    if (config_.sample_rate < 8000 || config_.sample_rate > 192000) {
+        printf("Error: Sample rate must be between 8000 and 192000 Hz, got %d\n", config_.sample_rate);
         return false;
     }
+    // Validate channel count (1 ~ 16)
+    if (config_.channel_count < 1 || config_.channel_count > 16) {
+        printf("Error: Channel count must be between 1 and 16, got %d\n", config_.channel_count);
+        return false;
+    }
+    // Validate audio format
     if (config_.format == AUDIO_FORMAT_INVALID) {
         printf("Error: Invalid audio format\n");
+        return false;
+    }
+    // Validate duration
+    if (config_.duration_seconds < 0) {
+        printf("Error: Duration cannot be negative: %d\n", config_.duration_seconds);
         return false;
     }
     return true;
@@ -829,7 +875,7 @@ bool AudioOperation::setupAudioFileForRecording(std::unique_ptr<AudioFileInterfa
     if (!config_.record_file_path.empty()) {
         AudioFileFormat detected_format = AudioFileFactory::detectFormatFromPath(config_.record_file_path);
         if (detected_format != config_.record_file_format) {
-            printf("Note: File format determined by file extension: %s (ignoring -t option)\n",
+            printf("Note: File format determined by file extension: %s (ignoring -T option)\n",
                    detected_format == AudioFileFormat::kWav ? "WAV" : "RawPCM");
             actual_format = detected_format;
         }
@@ -856,8 +902,8 @@ bool AudioOperation::setupAudioFileForRecording(std::unique_ptr<AudioFileInterfa
 }
 
 bool AudioOperation::setupAudioFileForPlayback(std::unique_ptr<AudioFileInterface>& audio_file) {
-    if (config_.play_file_path.empty() || access(config_.play_file_path.c_str(), F_OK) == -1) {
-        printf("Error: File does not exist: %s\n", config_.play_file_path.c_str());
+    if (config_.play_file_path.empty()) {
+        printf("Error: No playback file path specified\n");
         return false;
     }
 
@@ -868,6 +914,7 @@ bool AudioOperation::setupAudioFileForPlayback(std::unique_ptr<AudioFileInterfac
         return false;
     }
 
+    // Try to open the file directly - avoid TOCTOU race condition
     if (!audio_file->openForReading(config_.play_file_path)) {
         printf("Error: Failed to open audio file: %s\n", config_.play_file_path.c_str());
         return false;
@@ -895,8 +942,9 @@ void AudioOperation::updateLevelMeter(const char* buffer, size_t size) {
         return;
     }
 
-    constexpr float kNorm16bit = 32768.0f;
-    constexpr float kNorm32bit = 2147483648.0f;
+    constexpr float kNorm16bit = 32768.0f;       // 2^15
+    constexpr float kNorm24bit = 8388608.0f;     // 2^23
+    constexpr float kNorm32bit = 2147483648.0f;  // 2^31
     constexpr float kDbFloor = -60.0f;
 
     const size_t bytes_per_sample = audio_bytes_per_sample(config_.format);
@@ -912,6 +960,18 @@ void AudioOperation::updateLevelMeter(const char* buffer, size_t size) {
         for (size_t i = 0; i < num_samples; ++i) {
             peak_amplitude = std::max(peak_amplitude, static_cast<float>(std::abs(int16_data[i])) / kNorm16bit);
         }
+    } else if (bytes_per_sample == 3) {
+        // 24-bit packed PCM: 3 bytes per sample, little-endian
+        const uint8_t* data = reinterpret_cast<const uint8_t*>(buffer);
+        for (size_t i = 0; i < num_samples; ++i) {
+            // Read 3 bytes as little-endian and sign-extend to 32-bit
+            int32_t sample = static_cast<int32_t>(data[i * 3] | (data[i * 3 + 1] << 8) | (data[i * 3 + 2] << 16));
+            // Sign extend from 24-bit to 32-bit
+            if (sample & 0x800000) {
+                sample |= 0xFF000000;
+            }
+            peak_amplitude = std::max(peak_amplitude, static_cast<float>(std::abs(sample)) / kNorm24bit);
+        }
     } else if (bytes_per_sample == 4) {
         const int32_t* int32_data = reinterpret_cast<const int32_t*>(buffer);
         for (size_t i = 0; i < num_samples; ++i) {
@@ -924,7 +984,7 @@ void AudioOperation::updateLevelMeter(const char* buffer, size_t size) {
 
     const float db_level = peak_amplitude > 0.0f ? std::max(20.0f * std::log10(peak_amplitude), kDbFloor) : kDbFloor;
     const std::string timestamp = AudioUtils::getTimestamp();
-    printf("[%s] Debug Audio Level: %.1f dB, bytes: %zu\n", timestamp.c_str(), db_level, size);
+    printf("[%s] Audio Level: %.1f dB, size: %zu bytes\n", timestamp.c_str(), db_level, size);
 }
 
 bool AudioOperation::startAudioRecord(const android::sp<android::AudioRecord>& audio_record) {
@@ -1042,7 +1102,8 @@ int32_t AudioRecordOperation::execute() {
 
 int32_t AudioRecordOperation::recordLoop(const android::sp<android::AudioRecord>& audio_record,
                                          AudioFileInterface& audio_file) {
-    BufferManager buffer_manager(calculateBufferSize());
+    const size_t buffer_size = calculateBufferSize();
+    BufferManager buffer_manager(buffer_size);
     if (!buffer_manager.isValid()) {
         printf("Error: Failed to create valid buffer manager\n");
         return -1;
@@ -1064,7 +1125,7 @@ int32_t AudioRecordOperation::recordLoop(const android::sp<android::AudioRecord>
 
     uint64_t total_bytes_read = 0;
     while (total_bytes_read < max_bytes_to_record && !signal_guard_.isExitRequested()) {
-        const ssize_t bytes_read = audio_record->read(audio_buffer, calculateBufferSize());
+        const ssize_t bytes_read = audio_record->read(audio_buffer, buffer_size);
         if (bytes_read < 0) {
             printf("Error: AudioRecord read failed: %zd\n", bytes_read);
             ALOGE("AudioRecord read failed: %zd", bytes_read);
@@ -1125,7 +1186,8 @@ int32_t AudioPlayOperation::execute() {
 
 int32_t AudioPlayOperation::playLoop(const android::sp<android::AudioTrack>& audio_track,
                                      AudioFileInterface& audio_file) {
-    BufferManager buffer_manager(calculateBufferSize());
+    const size_t buffer_size = calculateBufferSize();
+    BufferManager buffer_manager(buffer_size);
     if (!buffer_manager.isValid()) {
         printf("Error: Failed to create valid buffer manager\n");
         return -1;
@@ -1138,7 +1200,7 @@ int32_t AudioPlayOperation::playLoop(const android::sp<android::AudioTrack>& aud
     next_progress_report_ = bytes_per_second * kProgressReportInterval;
     uint64_t total_bytes_played = 0;
     while (!signal_guard_.isExitRequested()) {
-        const size_t bytes_read = audio_file.readData(audio_buffer, calculateBufferSize());
+        const size_t bytes_read = audio_file.readData(audio_buffer, buffer_size);
         if (bytes_read == 0) {
             printf("End of file reached\n");
             break;
@@ -1157,7 +1219,7 @@ int32_t AudioPlayOperation::playLoop(const android::sp<android::AudioTrack>& aud
         }
         total_bytes_played += static_cast<uint64_t>(bytes_written);
 
-        updateLevelMeter(audio_buffer, bytes_read);
+        updateLevelMeter(audio_buffer, bytes_written);
 
         reportPlayProgress(audio_track, total_bytes_played, bytes_per_second);
     }
@@ -1212,7 +1274,6 @@ int32_t AudioLoopbackOperation::execute() {
 int32_t AudioLoopbackOperation::loopbackLoopDualThread(const android::sp<android::AudioRecord>& audio_record,
                                                        const android::sp<android::AudioTrack>& audio_track,
                                                        AudioFileInterface& audio_file) {
-    const size_t buffer_size = calculateBufferSize();
     const uint64_t bytes_per_second = calculateBytesPerSecond();
     const uint64_t max_bytes_to_record =
         (config_.duration_seconds > 0) ? std::min(static_cast<uint64_t>(config_.duration_seconds) * bytes_per_second,
@@ -1232,10 +1293,8 @@ int32_t AudioLoopbackOperation::loopbackLoopDualThread(const android::sp<android
     total_bytes_recorded_.store(0);
     total_bytes_played_.store(0);
 
-    std::thread record_thread(&AudioLoopbackOperation::recordThread, this, audio_record, buffer_size,
-                              max_bytes_to_record, &audio_file);
-
-    std::thread play_thread(&AudioLoopbackOperation::playThread, this, audio_track, buffer_size);
+    std::thread record_thread(&AudioLoopbackOperation::recordThread, this, audio_record, &audio_file);
+    std::thread play_thread(&AudioLoopbackOperation::playThread, this, audio_track);
 
     while (!signal_guard_.isExitRequested() && !record_error_.load() && !play_error_.load()) {
         uint64_t current_recorded = total_bytes_recorded_.load();
@@ -1274,9 +1333,14 @@ int32_t AudioLoopbackOperation::loopbackLoopDualThread(const android::sp<android
 }
 
 void AudioLoopbackOperation::recordThread(const android::sp<android::AudioRecord>& audio_record,
-                                          size_t buffer_size,
-                                          uint64_t max_bytes,
                                           AudioFileInterface* audio_file) {
+    const size_t buffer_size = calculateBufferSize();
+    const uint64_t bytes_per_second = calculateBytesPerSecond();
+    const uint64_t max_bytes = (config_.duration_seconds > 0)
+                                   ? std::min(static_cast<uint64_t>(config_.duration_seconds) * bytes_per_second,
+                                              static_cast<uint64_t>(kMaxAudioDataSize))
+                                   : static_cast<uint64_t>(kMaxAudioDataSize);
+
     std::vector<char> buffer(buffer_size);
     uint64_t total_recorded = 0;
 
@@ -1302,7 +1366,8 @@ void AudioLoopbackOperation::recordThread(const android::sp<android::AudioRecord
             return;
         }
 
-        std::vector<char> play_buffer(bytes_read);
+        // Note: This involves one memory allocation + memcpy per iteration.
+        std::vector<char> play_buffer(static_cast<size_t>(bytes_read));
         memcpy(play_buffer.data(), buffer.data(), static_cast<size_t>(bytes_read));
         buffer_queue_.push(std::move(play_buffer));
     }
@@ -1310,7 +1375,7 @@ void AudioLoopbackOperation::recordThread(const android::sp<android::AudioRecord
     buffer_queue_.stop();
 }
 
-void AudioLoopbackOperation::playThread(const android::sp<android::AudioTrack>& audio_track, size_t buffer_size) {
+void AudioLoopbackOperation::playThread(const android::sp<android::AudioTrack>& audio_track) {
     std::vector<char> buffer;
 
     while (!signal_guard_.isExitRequested() && !record_error_.load()) {
@@ -1463,20 +1528,8 @@ void CommandLineParser::parseArguments(int argc, char** argv, AudioMode& mode, A
     }
 
     if (mode == AudioMode::kSetParams) {
-        for (int32_t i = optind; i < argc; ++i) {
-            std::string arg_str(argv[i]);
-            size_t start = 0;
-            size_t end = arg_str.find(',');
-            while (end != std::string::npos) {
-                if (end > start) {
-                    config.set_params.emplace_back(std::stoi(arg_str.substr(start, end - start)));
-                }
-                start = end + 1;
-                end = arg_str.find(',', start);
-            }
-            if (start < arg_str.length()) {
-                config.set_params.emplace_back(std::stoi(arg_str.substr(start)));
-            }
+        if (optind < argc) {
+            config.set_params = AudioUtils::parseIntList(argv[optind]);
         }
     } else {
         if (optind < argc) {
