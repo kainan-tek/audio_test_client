@@ -27,7 +27,7 @@ WavFile::~WavFile() noexcept {
     close();
 }
 
-void WavFile::Header::write(std::ostream& out) const {
+bool WavFile::Header::write(std::ostream& out) const {
     out.write(riff_id, 4);
     out.write(reinterpret_cast<const char*>(&riff_size), 4);
     out.write(wave_id, 4);
@@ -41,9 +41,11 @@ void WavFile::Header::write(std::ostream& out) const {
     out.write(reinterpret_cast<const char*>(&bits_per_sample), 2);
     out.write(data_id, 4);
     out.write(reinterpret_cast<const char*>(&data_size), 4);
+
+    return out.good();
 }
 
-void WavFile::Header::read(std::istream& in) {
+bool WavFile::Header::read(std::istream& in) {
     in.read(riff_id, 4);
     in.read(reinterpret_cast<char*>(&riff_size), 4);
     in.read(wave_id, 4);
@@ -57,6 +59,8 @@ void WavFile::Header::read(std::istream& in) {
     in.read(reinterpret_cast<char*>(&bits_per_sample), 2);
     in.read(data_id, 4);
     in.read(reinterpret_cast<char*>(&data_size), 4);
+
+    return !in.fail();
 }
 
 void WavFile::Header::print() const {
@@ -102,8 +106,8 @@ bool WavFile::createForWriting(const std::string& file_path,
     header_.data_size = 0;
     header_.riff_size = 36;
 
-    header_.write(file_stream_);
-    if (!file_stream_.good()) {
+    if (!header_.write(file_stream_)) {
+        printf("Error: Failed to write WAV header\n");
         file_stream_.close();
         return false;
     }
@@ -121,9 +125,14 @@ bool WavFile::openForReading(const std::string& file_path) {
         return false;
     }
 
-    header_.read(file_stream_);
+    if (!header_.read(file_stream_)) {
+        printf("Error: Failed to read WAV header\n");
+        file_stream_.close();
+        return false;
+    }
     if (strncmp(header_.riff_id, "RIFF", 4) != 0 || strncmp(header_.wave_id, "WAVE", 4) != 0 ||
         strncmp(header_.fmt_id, "fmt ", 4) != 0 || strncmp(header_.data_id, "data", 4) != 0) {
+        printf("Error: Invalid WAV file format\n");
         file_stream_.close();
         return false;
     }
@@ -160,10 +169,28 @@ void WavFile::updateHeader() {
         const auto current_pos = file_stream_.tellp();
 
         file_stream_.seekp(4, std::ios::beg);
+        if (!file_stream_.good()) {
+            printf("Error: Failed to seek to riff_size position\n");
+            return;
+        }
+
         file_stream_.write(reinterpret_cast<const char*>(&header_.riff_size), sizeof(header_.riff_size));
+        if (!file_stream_.good()) {
+            printf("Error: Failed to write riff_size\n");
+            return;
+        }
 
         file_stream_.seekp(data_size_pos_);
+        if (!file_stream_.good()) {
+            printf("Error: Failed to seek to data_size position\n");
+            return;
+        }
+
         file_stream_.write(reinterpret_cast<const char*>(&header_.data_size), sizeof(header_.data_size));
+        if (!file_stream_.good()) {
+            printf("Error: Failed to write data_size\n");
+            return;
+        }
 
         file_stream_.flush();
         file_stream_.seekp(current_pos);
@@ -338,7 +365,8 @@ std::unique_ptr<AudioFileInterface> AudioFileFactory::create(AudioFileFormat for
 AudioFileFormat AudioFileFactory::detectFormatFromPath(const std::string& file_path) {
     if (file_path.size() >= 4) {
         std::string ext = file_path.substr(file_path.size() - 4);
-        std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+        std::transform(ext.begin(), ext.end(), ext.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
         if (ext == ".wav") {
             return AudioFileFormat::kWav;
         }
@@ -379,7 +407,7 @@ bool BufferManager::isValid() const {
 void BufferManager::initializeBuffer(size_t requested_size) {
     static constexpr size_t kMinBufferSize = 480;
     static constexpr size_t kMaxBufferSize = 64 * 1024 * 1024;
-    const size_t validated_size = std::clamp(requested_size, kMinBufferSize, kMaxBufferSize);
+    const size_t validated_size = std::max(kMinBufferSize, std::min(requested_size, kMaxBufferSize));
 
     try {
         buffer_ = std::make_unique<char[]>(validated_size);
@@ -625,7 +653,7 @@ void AudioParameterManager::setChannelMask(const android::sp<android::AudioTrack
 }
 
 void AudioParameterManager::setSystemParameter(const android::String8& key, const android::String8& value) {
-    if constexpr (kEnableSetParams) {
+    if (kEnableSetParams) {
         android::AudioParameter audio_param;
         audio_param.add(key, value);
         android::String8 param_string = audio_param.toString();
@@ -637,7 +665,7 @@ void AudioParameterManager::setSystemParameter(const android::String8& key, cons
 void AudioParameterManager::setAudioTrackParameter(const android::sp<android::AudioTrack>& audio_track,
                                                    const android::String8& key,
                                                    const android::String8& value) {
-    if constexpr (kEnableSetParams) {
+    if (kEnableSetParams) {
         android::AudioParameter audio_param;
         audio_param.add(key, value);
         android::String8 param_string = audio_param.toString();
@@ -953,6 +981,11 @@ void AudioOperation::updateLevelMeter(const char* buffer, size_t size) {
         return;
     }
 
+    // Ensure size is properly aligned with sample size to prevent buffer overread
+    if (size % bytes_per_sample != 0) {
+        printf("Note: Audio data size (%zu) not aligned with sample size (%zu), using aligned portion only\n", size,
+               bytes_per_sample);
+    }
     const size_t num_samples = size / bytes_per_sample;
     float peak_amplitude = 0.0f;
     if (bytes_per_sample == 2) {
@@ -1312,7 +1345,7 @@ int32_t AudioLoopbackOperation::loopbackLoopDualThread(const android::sp<android
             audio_file.updateHeader();
         }
 
-        usleep(100000);  // 100ms
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
 
     buffer_queue_.stop();
@@ -1366,10 +1399,9 @@ void AudioLoopbackOperation::recordThread(const android::sp<android::AudioRecord
             return;
         }
 
-        // Note: This involves one memory allocation + memcpy per iteration.
-        std::vector<char> play_buffer(static_cast<size_t>(bytes_read));
-        memcpy(play_buffer.data(), buffer.data(), static_cast<size_t>(bytes_read));
-        buffer_queue_.push(std::move(play_buffer));
+        buffer.resize(static_cast<size_t>(bytes_read));
+        buffer_queue_.push(std::move(buffer));
+        buffer.resize(buffer_size);
     }
 
     buffer_queue_.stop();
@@ -1412,7 +1444,7 @@ int32_t SetParamsOperation::execute() {
         return -1;
     }
 
-    if constexpr (kEnableSetParams) {
+    if (kEnableSetParams) {
         printf("SetParams operation started with %zu parameters\n", target_params_.size());
         for (size_t i = 0; i < target_params_.size(); ++i) {
             printf("  Parameter %zu: %d\n", i + 1, target_params_[i]);
@@ -1476,7 +1508,7 @@ std::unique_ptr<AudioOperation> AudioOperationFactory::createOperation(AudioMode
 
 void CommandLineParser::parseArguments(int argc, char** argv, AudioMode& mode, AudioConfig& config) {
     int32_t opt = 0;
-    while ((opt = getopt(argc, argv, "m:s:r:c:f:I:u:O:F:d:P:T:h:")) != -1) {
+    while ((opt = getopt(argc, argv, "m:s:r:c:f:I:u:O:F:d:P:T:h")) != -1) {
         switch (opt) {
             case 'm':
                 mode = static_cast<AudioMode>(atoi(optarg));

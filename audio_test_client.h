@@ -20,13 +20,10 @@
 #define AUDIO_TEST_CLIENT_H_
 
 // C system headers
-#include <fcntl.h>
 #include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
-#include <sys/stat.h>
 #include <sys/time.h>
 #include <sys/types.h>
 #include <time.h>
@@ -35,6 +32,7 @@
 // C++ standard library headers
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cinttypes>
 #include <cmath>
 #include <condition_variable>
@@ -59,7 +57,7 @@
 #include <utils/String8.h>
 
 #define LOG_TAG "audio_test_client"
-#define AUDIO_TEST_CLIENT_VERSION "3.1.0"
+#define AUDIO_TEST_CLIENT_VERSION "3.2.0"
 
 static constexpr bool kEnableSetParams = false;
 
@@ -102,7 +100,7 @@ protected:
 };
 
 /************************** WAV File Implementation ******************************/
-class WavFile : public AudioFileInterface {
+class WavFile final : public AudioFileInterface {
 public:
     WavFile() = default;
     ~WavFile() noexcept override;
@@ -128,8 +126,8 @@ public:
         char data_id[4];
         uint32_t data_size;
 
-        void write(std::ostream& out) const;
-        void read(std::istream& in);
+        bool write(std::ostream& out) const;
+        bool read(std::istream& in);
         void print() const;
     };
 #pragma pack(pop)
@@ -159,12 +157,12 @@ private:
     Header header_{};
     std::string file_path_;
     std::fstream file_stream_;
-    bool is_header_valid_{false};
-    std::streampos data_size_pos_{};
+    bool is_header_valid_;
+    std::streampos data_size_pos_;
 };
 
 /************************** Raw PCM File Implementation ******************************/
-class RawPcmFile : public AudioFileInterface {
+class RawPcmFile final : public AudioFileInterface {
 public:
     RawPcmFile() = default;
     ~RawPcmFile() noexcept override;
@@ -195,9 +193,9 @@ public:
 private:
     std::string file_path_;
     std::fstream file_stream_;
-    int32_t sample_rate_{48000};
-    int32_t num_channels_{2};
-    uint32_t bits_per_sample_{16};
+    int32_t sample_rate_ = 48000;
+    int32_t num_channels_ = 2;
+    uint32_t bits_per_sample_ = 16;
 };
 
 /************************** Audio File Factory ******************************/
@@ -211,7 +209,7 @@ public:
 };
 
 /************************** BufferManager class ******************************/
-class BufferManager {
+class BufferManager final {
 public:
     explicit BufferManager(size_t buffer_size);
     ~BufferManager() noexcept = default;
@@ -229,7 +227,7 @@ private:
     void initializeBuffer(size_t requested_size);
 
     std::unique_ptr<char[]> buffer_;
-    size_t size_{0};
+    size_t size_;
 };
 
 /************************** Audio Utility Functions ******************************/
@@ -252,7 +250,7 @@ public:
 };
 
 /************************** Signal Guard (RAII) ******************************/
-class SignalGuard {
+class SignalGuard final {
 public:
     SignalGuard();
     ~SignalGuard() noexcept;
@@ -278,23 +276,23 @@ struct AudioConfig {
     int32_t sample_rate = 48000;
     int32_t channel_count = 2;
     audio_format_t format = AUDIO_FORMAT_PCM_16_BIT;
-    size_t min_frame_count = 0;
+    size_t min_frame_count;
 
     audio_source_t input_source = AUDIO_SOURCE_MIC;
     audio_input_flags_t input_flag = AUDIO_INPUT_FLAG_NONE;
-    int32_t duration_seconds = 0;
-    std::string record_file_path = "";
+    int32_t duration_seconds;
+    std::string record_file_path;
     AudioFileFormat record_file_format = AudioFileFormat::kWav;
 
     audio_usage_t usage = AUDIO_USAGE_MEDIA;
     audio_output_flags_t output_flag = AUDIO_OUTPUT_FLAG_NONE;
     std::string play_file_path = "/data/audio_test.wav";
 
-    std::vector<int32_t> set_params{};
+    std::vector<int32_t> set_params;
 };
 
 /************************** Audio Parameter Manager ******************************/
-class AudioParameterManager {
+class AudioParameterManager final {
 public:
     AudioParameterManager() = default;
     ~AudioParameterManager() noexcept = default;
@@ -321,7 +319,7 @@ private:
 };
 
 /************************** Thread Safe Buffer Queue ******************************/
-class ThreadSafeBufferQueue {
+class ThreadSafeBufferQueue final {
 public:
     explicit ThreadSafeBufferQueue(size_t max_buffers = 16) : max_buffers_(max_buffers), stopped_(false) {}
     ~ThreadSafeBufferQueue() = default;
@@ -367,8 +365,8 @@ protected:
     AudioConfig config_;
     AudioParameterManager audio_param_manager_;
     SignalGuard signal_guard_;
-    uint32_t level_meter_counter_ = 0;
-    uint64_t next_progress_report_ = 0;
+    uint32_t level_meter_counter_;
+    uint64_t next_progress_report_;
 
     size_t calculateBufferSize() const;
     size_t calculateFrameCount() const;
@@ -398,7 +396,7 @@ protected:
 };
 
 /************************** Audio Record Operation ******************************/
-class AudioRecordOperation : public AudioOperation {
+class AudioRecordOperation final : public AudioOperation {
 public:
     explicit AudioRecordOperation(const AudioConfig& config);
     ~AudioRecordOperation() noexcept override = default;
@@ -415,7 +413,7 @@ private:
 };
 
 /************************** Audio Play Operation ******************************/
-class AudioPlayOperation : public AudioOperation {
+class AudioPlayOperation final : public AudioOperation {
 public:
     explicit AudioPlayOperation(const AudioConfig& config);
     ~AudioPlayOperation() noexcept override = default;
@@ -432,7 +430,7 @@ private:
 };
 
 /************************** Audio Loopback Operation ******************************/
-class AudioLoopbackOperation : public AudioOperation {
+class AudioLoopbackOperation final : public AudioOperation {
 public:
     explicit AudioLoopbackOperation(const AudioConfig& config);
     ~AudioLoopbackOperation() noexcept override = default;
@@ -446,10 +444,10 @@ public:
 
 private:
     ThreadSafeBufferQueue buffer_queue_;
-    std::atomic<bool> record_error_{false};
-    std::atomic<bool> play_error_{false};
-    std::atomic<uint64_t> total_bytes_recorded_{0};
-    std::atomic<uint64_t> total_bytes_played_{0};
+    std::atomic<bool> record_error_;
+    std::atomic<bool> play_error_;
+    std::atomic<uint64_t> total_bytes_recorded_;
+    std::atomic<uint64_t> total_bytes_played_;
 
     int32_t loopbackLoopDualThread(const android::sp<android::AudioRecord>& audio_record,
                                    const android::sp<android::AudioTrack>& audio_track,
@@ -459,7 +457,7 @@ private:
 };
 
 /************************** Set Parameters Operation ******************************/
-class SetParamsOperation : public AudioOperation {
+class SetParamsOperation final : public AudioOperation {
 public:
     explicit SetParamsOperation(const AudioConfig& config, const std::vector<int32_t>& params);
     ~SetParamsOperation() noexcept override = default;
