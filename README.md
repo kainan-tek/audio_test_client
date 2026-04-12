@@ -12,6 +12,7 @@
 - [参数说明](#参数说明)
 - [故障排除](#故障排除)
 - [许可证](#许可证)
+- [联系方式](#联系方式)
 
 ## 项目简介
 
@@ -50,27 +51,27 @@ audio_test_client -m<mode> [options] [audio_file]
 
 ```bash
 # 使用麦克风录制48kHz双声道音频20秒
-./audio_test_client -m0 -s1 -r48000 -c2 -f1 -d20
+./audio_test_client -m0 -s1 -r48000 -c2 -f1 -I0 -F960 -d20
 
 # 录制为 Raw PCM 格式
-./audio_test_client -m0 -s1 -r48000 -c2 -f1 -d20 -T1
+./audio_test_client -m0 -s1 -r48000 -c2 -f1 -I0 -F960 -d20 -T1
 ```
 
 #### 播放测试
 
 ```bash
 # 播放 WAV 文件
-./audio_test_client -m1 -u1 -P/data/audio_test.wav
+./audio_test_client -m1 -u1 -O0 -F960 -P/data/audio_test.wav
 
 # 播放 Raw PCM 文件（需指定参数）
-./audio_test_client -m1 -u1 -P/data/audio.pcm -r48000 -c2 -f1
+./audio_test_client -m1 -u1 -O0 -F960 -P/data/audio.pcm -r48000 -c2 -f1
 ```
 
 #### 回环延迟测试
 
 ```bash
 # 同时录音和播放，测试音频延迟
-./audio_test_client -m2 -s1 -r48000 -c2 -f1 -u1 -d20
+./audio_test_client -m2 -s1 -r48000 -c2 -f1 -I0 -u1 -O0 -F960 -d20
 ```
 
 #### 系统参数配置
@@ -142,7 +143,7 @@ chmod 755 audio_test_client
 | 参数           | 说明                              | 示例                 |
 |--------------|---------------------------------|--------------------|
 | `-m<mode>`   | 工作模式：0=录音, 1=播放, 2=回环, 100=设置参数 | `-m0`              |
-| `-F<frames>` | 最小帧数缓冲区大小（默认系统自动）               | `-F960`            |
+| `-F<frames>` | 帧数。指定则使用该值；未指定时 FAST 路径默认 20ms，Deep Buffer 路径由系统选择 | `-F960` (20ms@48kHz) |
 | `-P<path>`   | 音频文件路径                          | `-P/data/test.wav` |
 | `-h`         | 显示详细帮助信息                        | `-h`               |
 
@@ -154,7 +155,7 @@ chmod 755 audio_test_client
 | `-r<rate>`    | 采样率 (Hz)     | 8000, 16000, 48000               |
 | `-c<count>`   | 声道数          | 1, 2                             |
 | `-f<format>`  | 音频格式         | 1=PCM16, 3=PCM32, 6=PCM24_PACKED |
-| `-I<flag>`    | 输入标志位        | 0=标准, 1=低延迟                      |
+| `-I<flag>`    | 输入标志位 | 0=标准, 1=FAST低延迟       |
 | `-d<seconds>` | 录音时长（秒，0=无限） | `10`                             |
 | `-T<type>`    | 文件格式         | 0=WAV(默认), 1=Raw PCM             |
 
@@ -177,7 +178,7 @@ chmod 755 audio_test_client
 | 参数          | 说明           | 常用值                |
 |-------------|--------------|--------------------|
 | `-u<usage>` | 音频用途类型       | 1=媒体, 2=通话, 14=游戏  |
-| `-O<flag>`  | 输出标志位        | 0=标准, 4=低延迟        |
+| `-O<flag>`  | 输出标志位 | 0=标准, 4=FAST低延迟 |
 | `-P<path>`  | 播放文件路径（必须指定） | `-P/data/test.wav` |
 
 **文件格式自动识别**：
@@ -225,9 +226,13 @@ chmod 755 audio_test_client
 | 值 | 输入标志 (-I) | 输出标志 (-O)   | 说明               |
 |---|-----------|-------------|------------------|
 | 0 | NONE      | NONE        | 标准延迟 (~40-80ms)  |
-| 1 | FAST      | -           | 低延迟输入 (~10-20ms) |
-| 4 | -         | FAST        | 低延迟输出 (~10-20ms) |
+| 1 | FAST      | -           | 低延迟输入，默认 20ms    |
+| 4 | -         | FAST        | 低延迟输出，默认 20ms    |
 | 8 | SYNC      | DEEP_BUFFER | 同步/省电模式          |
+
+**注意**: 
+- 指定 `-F` 时使用指定值
+- 未指定 `-F` 时：FAST 路径默认 20ms，Deep Buffer 路径使用 getMinFrameCount 返回值
 
 ## 故障排除
 
@@ -271,7 +276,7 @@ adb logcat -s AudioFlinger AudioPolicyService
 
 ### 进度显示
 
-录音和播放过程中会定期显示进度：
+录音和播放过程中会定期显示进度（每10秒）：
 
 ```
 Recording ... , processed 10.00 seconds, 1.92 MB
@@ -280,6 +285,7 @@ Recording ... , processed 20.00 seconds, 3.84 MB
 
 - 显示已处理的秒数
 - 显示已处理的数据量 (MB)
+- 进度报告基于时间间隔，不受处理速度影响
 
 ### 电平表
 
@@ -298,9 +304,8 @@ Recording ... , processed 20.00 seconds, 3.84 MB
 
 ## 性能指标
 
-- **低延迟模式**: ~10-20ms (使用 FAST 标志)
-- **标准模式**: ~40-80ms
-- **深度缓冲**: ~80-200ms (省电模式)
+- **低延迟模式 (FAST)**: ~10-20ms (FAST 标志 + `-F` 指定帧数)
+- **标准模式 (Deep Buffer)**: 缓冲区大小由 getMinFrameCount 返回，通常 40-200ms
 - **采样率**: 8kHz - 192kHz
 - **声道数**: 1-16 声道
 - **最大文件**: 4GB WAV 文件
@@ -316,6 +321,23 @@ Recording ... , processed 20.00 seconds, 3.84 MB
 
 本项目采用 GNU General Public License v3.0 许可证。详细信息请参阅 [LICENSE](LICENSE) 文件。
 
----
-
 **注意**: 本工具专为 Android 系统级音频开发和测试设计，需要系统级权限。请确保在合适的测试环境中使用。
+
+## 联系方式 
+
+ - **作者**: kainan-tek 
+ - **邮箱**: kainanos@outlook.com 
+ - **GitHub**: https://github.com/kainan-tek/audio_test_client 
+ - **问题反馈**: `https://github.com/kainan-tek/audio_test_client/issues` 
+
+ ---
+
+ <div align="center"> 
+
+ **如果这个项目对你有帮助，请给个 ⭐ Star！** 
+
+ Made with ❤️ by kainan-tek 
+
+ [⬆ 回到顶部](#audio-test-client) 
+
+ </div>

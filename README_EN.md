@@ -13,6 +13,7 @@ playback, loopback testing, and parameter configuration.
 - [Parameter Reference](#parameter-reference)
 - [Troubleshooting](#troubleshooting)
 - [License](#license)
+- [Contact](#contact)
 
 ## Introduction
 
@@ -51,27 +52,27 @@ audio_test_client -m<mode> [options] [audio_file]
 
 ```bash
 # Record 48kHz stereo audio for 20 seconds using microphone
-./audio_test_client -m0 -s1 -r48000 -c2 -f1 -d20
+./audio_test_client -m0 -s1 -r48000 -c2 -f1 -I0 -F960 -d20
 
 # Record as Raw PCM format
-./audio_test_client -m0 -s1 -r48000 -c2 -f1 -d20 -T1
+./audio_test_client -m0 -s1 -r48000 -c2 -f1 -I0 -F960 -d20 -T1
 ```
 
 #### Playback Test
 
 ```bash
 # Play WAV file
-./audio_test_client -m1 -u1 -P/data/audio_test.wav
+./audio_test_client -m1 -u1 -O0 -F960 -P/data/audio_test.wav
 
 # Play Raw PCM file (parameters required)
-./audio_test_client -m1 -u1 -P/data/audio.pcm -r48000 -c2 -f1
+./audio_test_client -m1 -u1 -O0 -F960 -P/data/audio.pcm -r48000 -c2 -f1
 ```
 
 #### Loopback Latency Test
 
 ```bash
 # Simultaneous recording and playback to test audio latency
-./audio_test_client -m2 -s1 -r48000 -c2 -f1 -u1 -d20
+./audio_test_client -m2 -s1 -r48000 -c2 -f1 -I0 -u1 -O0 -F960 -d20
 ```
 
 #### System Parameter Configuration
@@ -145,7 +146,7 @@ chmod 755 audio_test_client
 | Parameter    | Description                                                      | Example            |
 |--------------|------------------------------------------------------------------|--------------------|
 | `-m<mode>`   | Operation mode: 0=record, 1=playback, 2=loopback, 100=set params | `-m0`              |
-| `-F<frames>` | Minimum frame buffer size (default: auto)                        | `-F960`            |
+| `-F<frames>` | Frame count. If specified, uses this value; if not, FAST path defaults to 20ms, Deep Buffer uses getMinFrameCount | `-F960` (20ms@48kHz) |
 | `-P<path>`   | Audio file path                                                  | `-P/data/test.wav` |
 | `-h`         | Display detailed help information                                | `-h`               |
 
@@ -157,7 +158,7 @@ chmod 755 audio_test_client
 | `-r<rate>`    | Sample rate (Hz)                         | 8000, 16000, 48000                                |
 | `-c<count>`   | Channel count                            | 1, 2                                              |
 | `-f<format>`  | Audio format                             | 1=PCM16, 3=PCM32, 6=PCM24_PACKED                  |
-| `-I<flag>`    | Input flags                              | 0=standard, 1=low latency                         |
+| `-I<flag>`    | Input flags                              | 0=standard, 1=FAST low latency                    |
 | `-d<seconds>` | Recording duration (seconds, 0=infinite) | `10`                                              |
 | `-T<type>`    | File format                              | 0=WAV(default), 1=Raw PCM                         |
 
@@ -180,7 +181,7 @@ Example: `/data/audio_record_20260315_143052_48000_2_16.wav`
 | Parameter   | Description                   | Common Values             |
 |-------------|-------------------------------|---------------------------|
 | `-u<usage>` | Audio usage type              | 1=media, 2=call, 14=game  |
-| `-O<flag>`  | Output flags                  | 0=standard, 4=low latency |
+| `-O<flag>`  | Output flags                          | 0=standard, 4=FAST low latency |
 | `-P<path>`  | Playback file path (required) | `-P/data/test.wav`        |
 
 **File Format Auto-Detection**:
@@ -228,9 +229,13 @@ Example: `/data/audio_record_20260315_143052_48000_2_16.wav`
 | Value | Input Flag (-I) | Output Flag (-O) | Description                   |
 |-------|-----------------|------------------|-------------------------------|
 | 0     | NONE            | NONE             | Standard latency (~40-80ms)   |
-| 1     | FAST            | -                | Low latency input (~10-20ms)  |
-| 4     | -               | FAST             | Low latency output (~10-20ms) |
+| 1     | FAST            | -                | Low latency input, default 20ms |
+| 4     | -               | FAST             | Low latency output, default 20ms |
 | 8     | SYNC            | DEEP_BUFFER      | Sync/power-saving mode        |
+
+**Note**: 
+- If `-F` is specified, uses that value
+- If `-F` is not specified: FAST path defaults to 20ms, Deep Buffer path uses getMinFrameCount return value
 
 ## Troubleshooting
 
@@ -274,7 +279,7 @@ adb logcat -s AudioFlinger AudioPolicyService
 
 ### Progress Display
 
-During recording and playback, progress is displayed periodically:
+During recording and playback, progress is displayed periodically (every 10 seconds):
 
 ```
 Recording ... , processed 10.00 seconds, 1.92 MB
@@ -283,6 +288,7 @@ Recording ... , processed 20.00 seconds, 3.84 MB
 
 - Shows processed seconds
 - Shows processed data size (MB)
+- Progress reporting is time-based, independent of processing speed
 
 ### Level Meter
 
@@ -302,9 +308,8 @@ saved with updated WAV file header.
 
 ## Performance Metrics
 
-- **Low Latency Mode**: ~10-20ms (using FAST flag)
-- **Standard Mode**: ~40-80ms
-- **Deep Buffer**: ~80-200ms (power saving mode)
+- **Low Latency Mode (FAST)**: ~10-20ms (FAST flag + `-F` specified frame count)
+- **Standard Mode (Deep Buffer)**: Buffer size from getMinFrameCount, typically 40-200ms
 - **Sample Rate**: 8kHz - 192kHz
 - **Channel Count**: 1-16 channels
 - **Maximum File**: 4GB WAV file
@@ -324,7 +329,24 @@ saved with updated WAV file header.
 This project is licensed under the GNU General Public License v3.0. See the [LICENSE](LICENSE) file
 for details.
 
----
-
 **Note**: This tool is designed for Android system-level audio development and testing, requiring
 system-level permissions. Please ensure use in appropriate testing environments.
+
+## Contact 
+
+ - **Author**: kainan-tek 
+ - **Email**: kainanos@outlook.com 
+ - **GitHub**: https://github.com/kainan-tek/audio_test_client 
+ - **Issue**: `https://github.com/kainan-tek/audio_test_client/issues` 
+
+ ---
+
+ <div align="center"> 
+
+ **If this project helps you, please give it a ⭐ Star!** 
+
+ Made with ❤️ by kainan-tek 
+
+ [⬆ Back to top](#audio-test-client) 
+
+ </div>

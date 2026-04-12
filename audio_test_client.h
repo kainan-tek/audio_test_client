@@ -24,7 +24,6 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <sys/time.h>
 #include <sys/types.h>
 #include <time.h>
 #include <unistd.h>
@@ -32,15 +31,17 @@
 // C++ standard library headers
 #include <algorithm>
 #include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <cinttypes>
+#include <climits>
 #include <cmath>
 #include <condition_variable>
 #include <cstring>
 #include <fstream>
-#include <iostream>
 #include <memory>
 #include <mutex>
+#include <ostream>
 #include <queue>
 #include <string>
 #include <thread>
@@ -57,7 +58,7 @@
 #include <utils/String8.h>
 
 #define LOG_TAG "audio_test_client"
-#define AUDIO_TEST_CLIENT_VERSION "3.2.0"
+#define AUDIO_TEST_CLIENT_VERSION "3.3.0"
 
 static constexpr bool kEnableSetParams = false;
 
@@ -146,7 +147,6 @@ public:
     void close() override;
 
     const std::string& getFilePath() const override;
-    const Header& getHeader() const;
     int32_t getSampleRate() const override;
     int32_t getNumChannels() const override;
     uint32_t getBitsPerSample() const override;
@@ -157,8 +157,8 @@ private:
     Header header_{};
     std::string file_path_;
     std::fstream file_stream_;
-    bool is_header_valid_;
-    std::streampos data_size_pos_;
+    bool is_header_valid_ = false;
+    std::streampos data_size_pos_ = 0;
 };
 
 /************************** Raw PCM File Implementation ******************************/
@@ -187,8 +187,6 @@ public:
     uint32_t getBitsPerSample() const override;
     bool isOpen() const override;
     audio_format_t getAudioFormat() const override;
-
-    void setAudioParameters(int32_t sample_rate, int32_t num_channels, uint32_t bits_per_sample);
 
 private:
     std::string file_path_;
@@ -227,7 +225,7 @@ private:
     void initializeBuffer(size_t requested_size);
 
     std::unique_ptr<char[]> buffer_;
-    size_t size_;
+    size_t size_ = 0;
 };
 
 /************************** Audio Utility Functions ******************************/
@@ -239,6 +237,7 @@ public:
     static audio_stream_type_t usageToStreamType(audio_usage_t usage);
     static audio_content_type_t usageToContentType(audio_usage_t usage);
     static audio_format_t parseFormatOption(int v);
+    static audio_format_t bitsPerSampleToAudioFormat(uint32_t bits_per_sample);
     static std::string getFormatTime();
     static std::string getTimestamp();
     static std::string makeRecordFilePath(const int32_t sample_rate,
@@ -276,11 +275,11 @@ struct AudioConfig {
     int32_t sample_rate = 48000;
     int32_t channel_count = 2;
     audio_format_t format = AUDIO_FORMAT_PCM_16_BIT;
-    size_t min_frame_count;
+    size_t frame_count = 0;
 
     audio_source_t input_source = AUDIO_SOURCE_MIC;
     audio_input_flags_t input_flag = AUDIO_INPUT_FLAG_NONE;
-    int32_t duration_seconds;
+    int32_t duration_seconds = 0;
     std::string record_file_path;
     AudioFileFormat record_file_format = AudioFileFormat::kWav;
 
@@ -340,8 +339,8 @@ private:
     mutable std::mutex mutex_;
     std::condition_variable not_empty_;
     std::condition_variable not_full_;
-    size_t max_buffers_;
-    bool stopped_;
+    size_t max_buffers_ = 16;
+    bool stopped_ = false;
 };
 
 /************************** Audio Operation Base Class ******************************/
@@ -365,10 +364,10 @@ protected:
     AudioConfig config_;
     AudioParameterManager audio_param_manager_;
     SignalGuard signal_guard_;
-    uint32_t level_meter_counter_;
-    uint64_t next_progress_report_;
+    uint32_t level_meter_counter_ = 0;
+    std::chrono::steady_clock::time_point last_progress_time_;
 
-    size_t calculateBufferSize() const;
+    size_t calculateBufferSize(size_t actual_frame_count) const;
     size_t calculateFrameCount() const;
     uint64_t calculateBytesPerSecond() const;
     bool validateAudioParameters() const;
@@ -384,14 +383,7 @@ protected:
     bool setupAudioFileForRecording(std::unique_ptr<AudioFileInterface>& audio_file);
     bool setupAudioFileForPlayback(std::unique_ptr<AudioFileInterface>& audio_file);
 
-    bool reportRecordProgress(const android::sp<android::AudioRecord>& audio_record,
-                              uint64_t total_bytes_processed,
-                              uint64_t bytes_per_second,
-                              AudioFileInterface* audio_file);
-    bool reportPlayProgress(const android::sp<android::AudioTrack>& audio_track,
-                            uint64_t total_bytes_processed,
-                            uint64_t bytes_per_second);
-
+    bool reportProgress(uint64_t total_bytes_processed, uint64_t bytes_per_second, const char* action);
     void updateLevelMeter(const char* buffer, size_t size);
 };
 
@@ -444,15 +436,16 @@ public:
 
 private:
     ThreadSafeBufferQueue buffer_queue_;
-    std::atomic<bool> record_error_;
-    std::atomic<bool> play_error_;
-    std::atomic<uint64_t> total_bytes_recorded_;
-    std::atomic<uint64_t> total_bytes_played_;
+    std::atomic<bool> record_error_{false};
+    std::atomic<bool> play_error_{false};
+    std::atomic<bool> record_completed_{false};
+    std::atomic<uint64_t> total_bytes_recorded_{0};
+    std::atomic<uint64_t> total_bytes_played_{0};
 
     int32_t loopbackLoopDualThread(const android::sp<android::AudioRecord>& audio_record,
                                    const android::sp<android::AudioTrack>& audio_track,
                                    AudioFileInterface& audio_file);
-    void recordThread(const android::sp<android::AudioRecord>& audio_record, AudioFileInterface* audio_file);
+    void recordThread(const android::sp<android::AudioRecord>& audio_record, AudioFileInterface& audio_file);
     void playThread(const android::sp<android::AudioTrack>& audio_track);
 };
 
