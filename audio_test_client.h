@@ -31,6 +31,7 @@
 // C++ standard library headers
 #include <algorithm>
 #include <atomic>
+#include <cassert>
 #include <cerrno>
 #include <chrono>
 #include <cinttypes>
@@ -58,7 +59,7 @@
 #include <utils/String8.h>
 
 #define LOG_TAG "audio_test_client"
-#define AUDIO_TEST_CLIENT_VERSION "3.3.0"
+#define AUDIO_TEST_CLIENT_VERSION "3.5.0"
 
 static constexpr bool kEnableSetParams = false;
 
@@ -68,15 +69,15 @@ enum class AudioFileFormat {
     kRawPcm,
 };
 
-/************************** Audio File Interface ******************************/
-class AudioFileInterface {
+/************************** Audio File Base ******************************/
+class AudioFileBase {
 public:
-    virtual ~AudioFileInterface() = default;
+    virtual ~AudioFileBase() noexcept;
 
-    AudioFileInterface(const AudioFileInterface&) = delete;
-    AudioFileInterface& operator=(const AudioFileInterface&) = delete;
-    AudioFileInterface(AudioFileInterface&&) = delete;
-    AudioFileInterface& operator=(AudioFileInterface&&) = delete;
+    AudioFileBase(const AudioFileBase&) = delete;
+    AudioFileBase& operator=(const AudioFileBase&) = delete;
+    AudioFileBase(AudioFileBase&&) = delete;
+    AudioFileBase& operator=(AudioFileBase&&) = delete;
 
     virtual bool createForWriting(const std::string& file_path,
                                   int32_t sample_rate,
@@ -84,27 +85,34 @@ public:
                                   uint32_t bits_per_sample) = 0;
     virtual bool openForReading(const std::string& file_path) = 0;
     virtual size_t writeData(const char* data, size_t size) = 0;
-    virtual size_t readData(char* data, size_t size) = 0;
+    virtual size_t readData(char* data, size_t size);
     virtual void updateHeader() {}
     virtual void finalize() { close(); }
-    virtual void close() = 0;
+    virtual void close();
 
-    virtual const std::string& getFilePath() const = 0;
-    virtual int32_t getSampleRate() const = 0;
-    virtual int32_t getNumChannels() const = 0;
-    virtual uint32_t getBitsPerSample() const = 0;
-    virtual audio_format_t getAudioFormat() const = 0;
-    virtual bool isOpen() const = 0;
+    virtual const std::string& getFilePath() const;
+    virtual int32_t getSampleRate() const;
+    virtual int32_t getNumChannels() const;
+    virtual uint32_t getBitsPerSample() const;
+    virtual audio_format_t getAudioFormat() const;
+    virtual bool isOpen() const;
 
 protected:
-    AudioFileInterface() = default;
+    AudioFileBase() = default;
+
+    std::string file_path_;
+    std::fstream file_stream_;
+    int32_t sample_rate_ = 48000;
+    int32_t num_channels_ = 2;
+    uint32_t bits_per_sample_ = 16;
+    bool is_valid_ = false;
 };
 
 /************************** WAV File Implementation ******************************/
-class WavFile final : public AudioFileInterface {
+class WavFile final : public AudioFileBase {
 public:
     WavFile() = default;
-    ~WavFile() noexcept override;
+    ~WavFile() noexcept override = default;
 
     WavFile(const WavFile&) = delete;
     WavFile& operator=(const WavFile&) = delete;
@@ -142,30 +150,18 @@ public:
     bool openForReading(const std::string& file_path) override;
     size_t writeData(const char* data, size_t size) override;
     void updateHeader() override;
-    size_t readData(char* data, size_t size) override;
     void finalize() override;
-    void close() override;
-
-    const std::string& getFilePath() const override;
-    int32_t getSampleRate() const override;
-    int32_t getNumChannels() const override;
-    uint32_t getBitsPerSample() const override;
-    bool isOpen() const override;
     audio_format_t getAudioFormat() const override;
 
 private:
     Header header_{};
-    std::string file_path_;
-    std::fstream file_stream_;
-    bool is_header_valid_ = false;
-    std::streampos data_size_pos_ = 0;
 };
 
 /************************** Raw PCM File Implementation ******************************/
-class RawPcmFile final : public AudioFileInterface {
+class RawPcmFile final : public AudioFileBase {
 public:
     RawPcmFile() = default;
-    ~RawPcmFile() noexcept override;
+    ~RawPcmFile() noexcept override = default;
 
     RawPcmFile(const RawPcmFile&) = delete;
     RawPcmFile& operator=(const RawPcmFile&) = delete;
@@ -178,60 +174,19 @@ public:
                           uint32_t bits_per_sample) override;
     bool openForReading(const std::string& file_path) override;
     size_t writeData(const char* data, size_t size) override;
-    size_t readData(char* data, size_t size) override;
-    void close() override;
-
-    const std::string& getFilePath() const override;
-    int32_t getSampleRate() const override;
-    int32_t getNumChannels() const override;
-    uint32_t getBitsPerSample() const override;
-    bool isOpen() const override;
-    audio_format_t getAudioFormat() const override;
-
-private:
-    std::string file_path_;
-    std::fstream file_stream_;
-    int32_t sample_rate_ = 48000;
-    int32_t num_channels_ = 2;
-    uint32_t bits_per_sample_ = 16;
-};
-
-/************************** Audio File Factory ******************************/
-class AudioFileFactory {
-public:
-    AudioFileFactory() = delete;
-
-    static std::unique_ptr<AudioFileInterface> create(AudioFileFormat format);
-    static AudioFileFormat detectFormatFromPath(const std::string& file_path);
-    static std::string getDefaultExtension(AudioFileFormat format);
-};
-
-/************************** BufferManager class ******************************/
-class BufferManager final {
-public:
-    explicit BufferManager(size_t buffer_size);
-    ~BufferManager() noexcept = default;
-
-    BufferManager(const BufferManager&) = delete;
-    BufferManager& operator=(const BufferManager&) = delete;
-    BufferManager(BufferManager&&) = delete;
-    BufferManager& operator=(BufferManager&&) = delete;
-
-    char* get() const;
-    size_t getSize() const;
-    bool isValid() const;
-
-private:
-    void initializeBuffer(size_t requested_size);
-
-    std::unique_ptr<char[]> buffer_;
-    size_t size_ = 0;
 };
 
 /************************** Audio Utility Functions ******************************/
 class AudioUtils {
 private:
     AudioUtils() = delete;
+
+    struct UsageInfo {
+        audio_stream_type_t stream_type;
+        audio_content_type_t content_type;
+    };
+
+    static UsageInfo getUsageInfo(audio_usage_t usage);
 
 public:
     static audio_stream_type_t usageToStreamType(audio_usage_t usage);
@@ -246,6 +201,10 @@ public:
                                           const std::string& override_path,
                                           AudioFileFormat format = AudioFileFormat::kWav);
     static std::vector<int32_t> parseIntList(const std::string& str);
+    static std::vector<char> createAudioBuffer(size_t requested_size);
+    static std::unique_ptr<AudioFileBase> createAudioFile(AudioFileFormat format);
+    static AudioFileFormat detectFileFormat(const std::string& file_path);
+    static std::string getAudioFileExtension(AudioFileFormat format);
 };
 
 /************************** Signal Guard (RAII) ******************************/
@@ -259,8 +218,8 @@ public:
     SignalGuard(SignalGuard&&) = delete;
     SignalGuard& operator=(SignalGuard&&) = delete;
 
-    bool isExitRequested() const;
-    void requestExit();
+    static bool isExitRequested();
+    static void requestExit();
 
 private:
     static volatile sig_atomic_t s_exit_requested_;
@@ -268,7 +227,7 @@ private:
 };
 
 /************************** AudioMode Definitions ******************************/
-enum class AudioMode { kInvalid = -1, kRecord = 0, kPlay = 1, kLoopback = 2, kSetParams = 100 };
+enum class AudioMode { kInvalid = -1, kHelp = -2, kRecord = 0, kPlay = 1, kLoopback = 2, kSetParams = 100 };
 
 /************************** Audio Configuration ******************************/
 struct AudioConfig {
@@ -328,11 +287,10 @@ public:
     ThreadSafeBufferQueue(ThreadSafeBufferQueue&&) = delete;
     ThreadSafeBufferQueue& operator=(ThreadSafeBufferQueue&&) = delete;
 
-    void push(std::vector<char>&& buffer);
+    bool push(std::vector<char>&& buffer);
     bool pop(std::vector<char>& buffer);
     void stop();
     void reset();
-    size_t size() const;
 
 private:
     std::queue<std::vector<char>> queue_;
@@ -357,18 +315,17 @@ public:
     virtual int32_t execute() = 0;
 
 protected:
-    static constexpr uint64_t kMaxAudioDataSize = 0xFFFFFFFFu;  // ~4GB, WAV format limit (uint32_t max)
+    static constexpr uint64_t kMaxAudioDataSize =
+        static_cast<uint64_t>(UINT32_MAX) - 36;  // WAV riff_size = 36 + data_size, must not overflow uint32_t
     static constexpr uint32_t kProgressReportInterval = 10;
     static constexpr uint32_t kLevelMeterInterval = 25;
 
     AudioConfig config_;
     AudioParameterManager audio_param_manager_;
-    SignalGuard signal_guard_;
-    uint32_t level_meter_counter_ = 0;
-    std::chrono::steady_clock::time_point last_progress_time_;
+    std::atomic<uint32_t> level_meter_counter_{0};
 
     size_t calculateBufferSize(size_t actual_frame_count) const;
-    size_t calculateFrameCount() const;
+    void resolveFrameCount(bool is_fast_path, size_t min_frame_count);
     uint64_t calculateBytesPerSecond() const;
     bool validateAudioParameters() const;
     android::content::AttributionSourceState createAttributionSource() const;
@@ -380,10 +337,13 @@ protected:
     void stopAudioRecord(const android::sp<android::AudioRecord>& audio_record);
     void stopAudioTrack(const android::sp<android::AudioTrack>& audio_track);
 
-    bool setupAudioFileForRecording(std::unique_ptr<AudioFileInterface>& audio_file);
-    bool setupAudioFileForPlayback(std::unique_ptr<AudioFileInterface>& audio_file);
+    bool setupAudioFileForRecording(std::unique_ptr<AudioFileBase>& audio_file);
+    bool setupAudioFileForPlayback(std::unique_ptr<AudioFileBase>& audio_file);
 
-    bool reportProgress(uint64_t total_bytes_processed, uint64_t bytes_per_second, const char* action);
+    bool reportProgress(const char* action,
+                        uint64_t total_bytes_processed,
+                        uint64_t bytes_per_second,
+                        std::chrono::steady_clock::time_point& last_time);
     void updateLevelMeter(const char* buffer, size_t size);
 };
 
@@ -401,7 +361,7 @@ public:
     int32_t execute() override;
 
 private:
-    int32_t recordLoop(const android::sp<android::AudioRecord>& audio_record, AudioFileInterface& audio_file);
+    int32_t recordLoop(const android::sp<android::AudioRecord>& audio_record, AudioFileBase& audio_file);
 };
 
 /************************** Audio Play Operation ******************************/
@@ -418,7 +378,7 @@ public:
     int32_t execute() override;
 
 private:
-    int32_t playLoop(const android::sp<android::AudioTrack>& audio_track, AudioFileInterface& audio_file);
+    int32_t playLoop(const android::sp<android::AudioTrack>& audio_track, AudioFileBase& audio_file);
 };
 
 /************************** Audio Loopback Operation ******************************/
@@ -444,8 +404,8 @@ private:
 
     int32_t loopbackLoopDualThread(const android::sp<android::AudioRecord>& audio_record,
                                    const android::sp<android::AudioTrack>& audio_track,
-                                   AudioFileInterface& audio_file);
-    void recordThread(const android::sp<android::AudioRecord>& audio_record, AudioFileInterface& audio_file);
+                                   AudioFileBase& audio_file);
+    void recordThread(const android::sp<android::AudioRecord>& audio_record, AudioFileBase& audio_file);
     void playThread(const android::sp<android::AudioTrack>& audio_track);
 };
 

@@ -2,7 +2,7 @@
 
 中文 | [English](README_EN.md)
 
-专业的 Android 系统级音频测试工具，基于 Native C++ 开发，支持录音、播放、回环测试和参数配置。
+专业的 Android 系统级音频测试工具，专为车载 AAOS 音频开发与测试设计，支持录音、播放、回环测试和参数配置。
 
 ## 目录
 
@@ -12,30 +12,23 @@
 - [参数说明](#参数说明)
 - [故障排除](#故障排除)
 - [许可证](#许可证)
-- [联系方式](#联系方式)
 
 ## 项目简介
 
-Audio Test Client 是一个 Android 系统级音频测试工具，基于 Android AudioRecord 和 AudioTrack Native
-API 开发。
-
-### 核心特性
+Audio Test Client 是一个 Android 系统级音频测试工具，基于 Android AudioRecord 和 AudioTrack Native API 开发。
 
 - **四种工作模式**: 录音、播放、回环测试、参数设置
 - **完整音频支持**: 1-16声道，8kHz-192kHz采样率，8/16/24/32位PCM
 - **多格式文件支持**: WAV 和 Raw PCM 格式读写，自动格式检测
 - **智能配置**: ContentType 根据 Usage 自动映射
 - **双线程回环**: 生产者-消费者架构，降低延迟
-- **模块化设计**: 清晰的类层次结构和工厂模式
 
-### 工作模式
-
-| 模式   | 参数      | 功能描述            | 应用场景         |
-|------|---------|-----------------|--------------|
-| 录音模式 | `-m0`   | 从指定音频源录制到文件     | 音频采集、质量测试    |
-| 播放模式 | `-m1`   | 播放音频文件          | 音频输出测试、兼容性验证 |
-| 回环模式 | `-m2`   | 同时录音和播放（实时回声测试） | 延迟测试、音频链路验证  |
-| 参数设置 | `-m100` | 配置音频系统参数        | 系统调优、参数验证    |
+| 模式 | 参数 | 功能描述 | 应用场景 |
+| --- | --- | --- | --- |
+| 录音模式 | `-m0` | 从指定音频源录制到文件 | 音频采集、质量测试 |
+| 播放模式 | `-m1` | 播放音频文件 | 音频输出测试、兼容性验证 |
+| 回环模式 | `-m2` | 同时录音和播放（实时回声测试） | 延迟测试、音频链路验证 |
+| 参数设置 | `-m100` | 配置音频系统参数 | 系统调优、参数验证 |
 
 ## 快速开始
 
@@ -107,12 +100,12 @@ adb shell setenforce 0
 # 在 Android 源码环境中编译
 mm audio_test_client
 
-# 推送到设备
+# 推送到设备并设置权限
 adb push out/target/product/[device]/system/bin/audio_test_client /data/
+adb shell chmod 755 /data/audio_test_client
 ```
 
-**版本兼容性**: Android.mk 会自动检测 `PLATFORM_VERSION`（14/15/16），自动适配不同 Android
-版本的接口差异，无需手动修改。
+**版本兼容性**: Android.mk 会自动检测 `PLATFORM_VERSION`（14/15/16），自动适配不同 Android 版本的接口差异，无需手动修改。
 
 #### 使用 Android.bp
 
@@ -120,52 +113,45 @@ adb push out/target/product/[device]/system/bin/audio_test_client /data/
 # 使用 Soong 构建系统
 m audio_test_client
 
-# 推送到设备
+# 推送到设备并设置权限
 adb push out/target/product/[device]/system/bin/audio_test_client /data/
+adb shell chmod 755 /data/audio_test_client
 ```
 
 **版本兼容性**: Android.bp 默认为 Android 14+ 构建，如需支持其他版本需手动修改配置文件。
 
 **注意**: 本项目依赖 Android 系统库（libmedia、libaudioclient、libbinder 等），必须在 Android 源码树环境中编译。
 
-### 权限设置
-
-```bash
-adb shell
-cd /data
-chmod 755 audio_test_client
-```
-
 ## 参数说明
 
 ### 通用参数
 
-| 参数           | 说明                              | 示例                 |
-|--------------|---------------------------------|--------------------|
-| `-m<mode>`   | 工作模式：0=录音, 1=播放, 2=回环, 100=设置参数 | `-m0`              |
-| `-F<frames>` | 帧数。指定则使用该值；未指定时 FAST 路径默认 20ms，Deep Buffer 路径由系统选择 | `-F960` (20ms@48kHz) |
-| `-P<path>`   | 音频文件路径                          | `-P/data/test.wav` |
-| `-h`         | 显示详细帮助信息                        | `-h`               |
+| 参数 | 说明 | 示例 |
+| --- | --- | --- |
+| `-m<mode>` | 工作模式：0=录音, 1=播放, 2=回环, 100=设置参数 | `-m0` |
+| `-F<frames>` | 帧数（未指定：FAST=20ms，Deep Buffer=系统默认） | `-F960` (20ms@48kHz) |
+| `-P<path>` | 音频文件路径 | `-P/data/test.wav` |
+| `-h` | 显示详细帮助信息 | `-h` |
 
 ### 录音模式参数 (-m0)
 
-| 参数            | 说明           | 常用值                              |
-|---------------|--------------|----------------------------------|
-| `-s<source>`  | 音频输入源        | 1=麦克风, 6=语音识别, 7=语音通信            |
-| `-r<rate>`    | 采样率 (Hz)     | 8000, 16000, 48000               |
-| `-c<count>`   | 声道数          | 1, 2                             |
-| `-f<format>`  | 音频格式         | 1=PCM16, 3=PCM32, 6=PCM24_PACKED |
-| `-I<flag>`    | 输入标志位 | 0=标准, 1=FAST低延迟       |
-| `-d<seconds>` | 录音时长（秒，0=无限） | `10`                             |
-| `-T<type>`    | 文件格式         | 0=WAV(默认), 1=Raw PCM             |
+| 参数 | 说明 | 常用值 |
+| --- | --- | --- |
+| `-s<source>` | 音频输入源 | 1=麦克风, 6=语音识别, 7=语音通信 |
+| `-r<rate>` | 采样率 (Hz) | 8000, 16000, 48000 |
+| `-c<count>` | 声道数 | 1, 2 |
+| `-f<format>` | 音频格式 | 1=PCM16, 3=PCM32, 6=PCM24_PACKED |
+| `-I<flag>` | 输入标志位 | 0=标准, 1=FAST低延迟 |
+| `-d<seconds>` | 录音时长（秒，0=无限） | `10` |
+| `-T<type>` | 文件格式 | 0=WAV(默认), 1=Raw PCM |
 
 **文件输出**: 若未指定 `-P` 参数，自动生成文件名格式：
 
-```
-/data/audio_record_YYYYMMDD_HHMMSS_[采样率]_[声道数]_[位深].wav
+```text
+/data/record_[采样率]Hz_[声道数]ch_[位深]bit_YYYYMMDD_HH.MM.SS.wav
 ```
 
-例如: `/data/audio_record_20260315_143052_48000_2_16.wav`
+例如: `/data/record_48000Hz_2ch_16bit_20260315_14.30.52.wav`
 
 **文件格式说明**：
 
@@ -175,11 +161,11 @@ chmod 755 audio_test_client
 
 ### 播放模式参数 (-m1)
 
-| 参数          | 说明           | 常用值                |
-|-------------|--------------|--------------------|
-| `-u<usage>` | 音频用途类型       | 1=媒体, 2=通话, 14=游戏  |
-| `-O<flag>`  | 输出标志位 | 0=标准, 4=FAST低延迟 |
-| `-P<path>`  | 播放文件路径（必须指定） | `-P/data/test.wav` |
+| 参数 | 说明 | 常用值 |
+| --- | --- | --- |
+| `-u<usage>` | 音频用途类型 | 1=媒体, 2=通话, 14=游戏 |
+| `-O<flag>` | 输出标志位 | 0=标准, 4=FAST低延迟 |
+| `-P<path>` | 播放文件路径（必须指定） | `-P/data/test.wav` |
 
 **文件格式自动识别**：
 
@@ -194,121 +180,36 @@ chmod 755 audio_test_client
 ./audio_test_client -m100 <operation>,<usage>
 ```
 
-| 位置 | 参数        | 说明                            |
-|----|-----------|-------------------------------|
-| 1  | operation | 1=open_source, 2=close_source |
-| 2  | usage     | 音频用途（见 Usage 枚举）              |
-
-### 常用枚举值
-
-#### 音频输入源 (Audio Source)
-
-| 值 | 常量名                              | 说明   | 适用场景    |
-|---|----------------------------------|------|---------|
-| 1 | AUDIO_SOURCE_MIC                 | 主麦克风 | 语音录制    |
-| 6 | AUDIO_SOURCE_VOICE_RECOGNITION   | 语音识别 | ASR 应用  |
-| 7 | AUDIO_SOURCE_VOICE_COMMUNICATION | 语音通信 | VoIP 应用 |
+| 位置 | 参数 | 说明 |
+| --- | --- | --- |
+| 1 | operation | 1=open_source, 2=close_source |
+| 2 | usage | 音频用途（见 Usage 枚举） |
 
 **完整枚举值请使用 `-h` 参数查看**
-
-#### 音频用途类型 (Audio Usage)
-
-| 值  | 常量名                             | 说明   | 自动映射 ContentType    |
-|----|---------------------------------|------|---------------------|
-| 1  | AUDIO_USAGE_MEDIA               | 媒体播放 | CONTENT_TYPE_MUSIC  |
-| 2  | AUDIO_USAGE_VOICE_COMMUNICATION | 语音通信 | CONTENT_TYPE_SPEECH |
-| 14 | AUDIO_USAGE_GAME                | 游戏   | CONTENT_TYPE_MUSIC  |
-
-**完整枚举值请使用 `-h` 参数查看**
-
-#### 输入/输出标志位
-
-| 值 | 输入标志 (-I) | 输出标志 (-O)   | 说明               |
-|---|-----------|-------------|------------------|
-| 0 | NONE      | NONE        | 标准延迟 (~40-80ms)  |
-| 1 | FAST      | -           | 低延迟输入，默认 20ms    |
-| 4 | -         | FAST        | 低延迟输出，默认 20ms    |
-| 8 | SYNC      | DEEP_BUFFER | 同步/省电模式          |
-
-**注意**: 
-- 指定 `-F` 时使用指定值
-- 未指定 `-F` 时：FAST 路径默认 20ms，Deep Buffer 路径使用 getMinFrameCount 返回值
 
 ## 故障排除
 
 ### 常见问题
 
-#### 1. 权限问题
+#### 权限问题
 
 ```bash
 # 错误: Permission denied
 adb root && adb remount
 adb shell setenforce 0
-chmod 755 /data/audio_test_client
 ```
 
-#### 2. 音频设备占用
+### 调试日志
 
 ```bash
-# 错误: AudioRecord/AudioTrack initialization failed
-adb shell stop audioserver
-adb shell start audioserver
+adb logcat -s audio_test_client AudioFlinger AudioPolicyService
 ```
 
-#### 3. 文件写入失败
+### 运行时监控
 
-```bash
-# 错误: Failed to create WAV file
-adb shell df /data  # 检查磁盘空间
-```
-
-### 调试模式
-
-```bash
-# 查看实时日志
-adb logcat -s audio_test_client
-
-# 查看音频系统日志
-adb logcat -s AudioFlinger AudioPolicyService
-```
-
-## 实时监控
-
-### 进度显示
-
-录音和播放过程中会定期显示进度（每10秒）：
-
-```
-Recording ... , processed 10.00 seconds, 1.92 MB
-Recording ... , processed 20.00 seconds, 3.84 MB
-```
-
-- 显示已处理的秒数
-- 显示已处理的数据量 (MB)
-- 进度报告基于时间间隔，不受处理速度影响
-
-### 电平表
-
-录音和播放过程中会实时显示音频电平：
-
-```
-[2026-03-15 14:30:52] Audio Level: -6.2 dB, size: 4096 bytes
-```
-
-- 支持 16/24/32 位 PCM 格式
-- 显示 dB 值（专业音频标准单位）
-
-### 中断处理
-
-按 `Ctrl+C` 可随时安全停止录音或播放，已录制的数据会自动保存并更新 WAV 文件头。
-
-## 性能指标
-
-- **低延迟模式 (FAST)**: ~10-20ms (FAST 标志 + `-F` 指定帧数)
-- **标准模式 (Deep Buffer)**: 缓冲区大小由 getMinFrameCount 返回，通常 40-200ms
-- **采样率**: 8kHz - 192kHz
-- **声道数**: 1-16 声道
-- **最大文件**: 4GB WAV 文件
+- **进度显示**: 每10秒报告已处理的数据量和时长
+- **电平表**: 实时显示音频电平（dB），支持 16/24/32 位 PCM
+- **中断处理**: `Ctrl+C` 安全停止，已录制数据自动保存并更新 WAV 文件头
 
 ## 相关项目
 
@@ -323,21 +224,14 @@ Recording ... , processed 20.00 seconds, 3.84 MB
 
 **注意**: 本工具专为 Android 系统级音频开发和测试设计，需要系统级权限。请确保在合适的测试环境中使用。
 
-## 联系方式 
+## 联系方式
 
- - **作者**: kainan-tek 
- - **邮箱**: kainanos@outlook.com 
- - **GitHub**: https://github.com/kainan-tek/audio_test_client 
- - **问题反馈**: `https://github.com/kainan-tek/audio_test_client/issues` 
+- **作者**: kainan-tek
+- **邮箱**: <kainanos@outlook.com>
+- **GitHub**: <https://github.com/kainan-tek/audio_test_client>
 
- ---
+---
 
- <div align="center"> 
+**如果这个项目对你有帮助，请给个 ⭐ Star！**
 
- **如果这个项目对你有帮助，请给个 ⭐ Star！** 
-
- Made with ❤️ by kainan-tek 
-
- [⬆ 回到顶部](#audio-test-client) 
-
- </div>
+[⬆ 回到顶部](#audio-test-client)
