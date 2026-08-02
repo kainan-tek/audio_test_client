@@ -21,7 +21,7 @@ Audio Test Client 是一个 Android 系统级音频测试工具，基于 Android
 - **完整音频支持**: 1-16声道，8kHz-192kHz采样率，8/16/24/32位PCM
 - **多格式文件支持**: WAV 和 Raw PCM 格式读写，自动格式检测
 - **智能配置**: ContentType 根据 Usage 自动映射
-- **双线程回环**: 生产者-消费者架构，降低延迟
+- **双线程回环**: 生产者-消费者架构，防止录音数据丢失
 
 | 模式 | 参数 | 功能描述 | 应用场景 |
 | --- | --- | --- | --- |
@@ -180,6 +180,8 @@ m audio_test_client
 ```bash
 ./audio_test_client -m100 <operation>,<usage>
 ```
+
+**注意**：此模式默认编译时禁用（`audio_test_client.h` 中 `kEnableSetParams = false`）。如需使用，将该常量改为 `true` 并重新编译。
 
 | 位置 | 参数 | 说明 |
 | --- | --- | --- |

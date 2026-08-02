@@ -38,9 +38,6 @@ int32_t AudioFileBase::getSampleRate() const {
 int32_t AudioFileBase::getNumChannels() const {
     return num_channels_;
 }
-uint32_t AudioFileBase::getBitsPerSample() const {
-    return bits_per_sample_;
-}
 
 audio_format_t AudioFileBase::getAudioFormat() const {
     audio_format_t format = AudioUtils::bitsPerSampleToAudioFormat(bits_per_sample_);
@@ -271,8 +268,8 @@ audio_format_t AudioUtils::bitsPerSampleToAudioFormat(uint32_t bits_per_sample) 
         case 24:
             return AUDIO_FORMAT_PCM_24_BIT_PACKED;
         case 32:
-            // WAV only stores bit depth; PCM_8_24_BIT (32-bit slot) round-trips as PCM_32_BIT.
-            // Layout is identical (24 valid bits in high 24, low 8 zero), so playback is unaffected.
+            // PCM_8_24_BIT left-justifies its 24-bit sample onto 32-bit scale, so it
+            // round-trips as PCM_32_BIT (WAV stores only bit depth) with amplitude preserved.
             return AUDIO_FORMAT_PCM_32_BIT;
         default:
             printf("Error: Unsupported PCM bit depth: %u\n", bits_per_sample);
@@ -594,13 +591,6 @@ void ThreadSafeBufferQueue::stop() {
     not_full_.notify_all();
 }
 
-void ThreadSafeBufferQueue::reset() {
-    std::unique_lock<std::mutex> lock(mutex_);
-    stopped_ = false;
-    std::queue<std::vector<char>> empty;
-    queue_.swap(empty);
-}
-
 /************************** AudioOperation Implementation ******************************/
 
 AudioOperation::AudioOperation(const AudioConfig& config) : config_(config) {}
@@ -617,25 +607,26 @@ uint64_t AudioOperation::calculateBytesPerSecond() const {
 }
 
 void AudioOperation::resolveFrameCount(bool is_fast_path, size_t min_frame_count) {
+    // Stability floor: buffers smaller than 10ms risk underrun or HAL rejection.
+    const size_t min_frames_for_10ms = static_cast<size_t>((config_.sample_rate * 10) / 1000);
+
     if (is_fast_path) {
         const size_t fast_frame_count = static_cast<size_t>((config_.sample_rate * 20) / 1000);
         if (config_.frame_count == 0 || config_.frame_count > fast_frame_count) {
             config_.frame_count = fast_frame_count;
         }
+        config_.frame_count = std::max(config_.frame_count, min_frames_for_10ms);
         printf("FAST path frame_count=%zu (%.1fms)\n", config_.frame_count,
                config_.frame_count * 1000.0 / config_.sample_rate);
     } else if (config_.frame_count > 0) {
+        config_.frame_count = std::max(config_.frame_count, min_frames_for_10ms);
         printf("Using frame_count=%zu (%.1fms)\n", config_.frame_count,
                config_.frame_count * 1000.0 / config_.sample_rate);
     } else {
-        config_.frame_count = min_frame_count;
+        config_.frame_count = std::max(min_frame_count, min_frames_for_10ms);
         printf("Using system min frame_count=%zu (%.1fms)\n", config_.frame_count,
                config_.frame_count * 1000.0 / config_.sample_rate);
     }
-
-    // Stability floor: buffers smaller than 10ms risk underrun or HAL rejection.
-    const size_t min_frames_for_10ms = static_cast<size_t>((config_.sample_rate * 10) / 1000);
-    config_.frame_count = std::max(config_.frame_count, min_frames_for_10ms);
 }
 
 bool AudioOperation::validateAudioParameters() const {
@@ -886,8 +877,8 @@ void AudioOperation::updateLevelMeter(const char* buffer, size_t size) {
         const int32_t* int32_data = reinterpret_cast<const int32_t*>(buffer);
         for (size_t i = 0; i < num_samples; ++i) {
             // int64_t cast prevents signed overflow on abs(INT32_MIN) (UB).
-            peak_amplitude = std::max(
-                peak_amplitude, static_cast<float>(std::abs(static_cast<int64_t>(int32_data[i]))) / kNorm32bit);
+            peak_amplitude = std::max(peak_amplitude,
+                                      static_cast<float>(std::abs(static_cast<int64_t>(int32_data[i]))) / kNorm32bit);
         }
     } else {
         // Skip unsupported byte depths (e.g. 8-bit PCM) silently to avoid "Error" spam.
@@ -1153,7 +1144,7 @@ int32_t AudioLoopbackOperation::execute() {
         return -1;
     }
 
-    int32_t operation_result = loopbackLoopDualThread(audio_record, audio_track, *audio_file);
+    int32_t operation_result = runLoopback(audio_record, audio_track, *audio_file);
 
     stopAudioRecord(audio_record);
     stopAudioTrack(audio_track);
@@ -1162,48 +1153,20 @@ int32_t AudioLoopbackOperation::execute() {
     return operation_result;
 }
 
-int32_t AudioLoopbackOperation::loopbackLoopDualThread(const android::sp<android::AudioRecord>& audio_record,
-                                                       const android::sp<android::AudioTrack>& audio_track,
-                                                       AudioFileBase& audio_file) {
+int32_t AudioLoopbackOperation::runLoopback(const android::sp<android::AudioRecord>& audio_record,
+                                            const android::sp<android::AudioTrack>& audio_track,
+                                            AudioFileBase& audio_file) {
     if (config_.duration_seconds > 0) {
         printf("Loopback audio started: Duration %d seconds...\n", config_.duration_seconds);
     }
-    printf("Loopback audio in progress (dual-thread mode). Press Ctrl+C to stop\n");
-    ALOGI("Loopback audio in progress (dual-thread mode).");
+    printf("Loopback audio in progress. Press Ctrl+C to stop\n");
+    ALOGI("Loopback audio in progress.");
 
-    buffer_queue_.reset();
-    record_error_.store(false);
     play_error_.store(false);
-    record_finished_.store(false);
-    total_bytes_recorded_.store(0);
     total_bytes_played_.store(0);
 
-    std::thread record_thread(&AudioLoopbackOperation::recordThread, this, audio_record, std::ref(audio_file));
     std::thread play_thread(&AudioLoopbackOperation::playThread, this, audio_track);
 
-    while (!SignalGuard::isExitRequested() && !record_error_.load() && !play_error_.load() &&
-           !record_finished_.load()) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    }
-    // Stop both producers before joining: audio_record->stop() wakes a read-blocked
-    // recordThread, buffer_queue_.stop() wakes a push-blocked one (queue full when
-    // recording outruns playback). Joining before stop deadlocks if the queue is full.
-    audio_record->stop();
-    buffer_queue_.stop();
-    record_thread.join();
-    play_thread.join();
-
-    const uint64_t final_recorded = total_bytes_recorded_.load();
-    const uint64_t final_played = total_bytes_played_.load();
-    printf("Loopback audio completed: Total bytes recorded: %" PRIu64 ", Total bytes played: %" PRIu64
-           ", File saved: %s\n",
-           final_recorded, final_played, audio_file.getFilePath().c_str());
-
-    return (record_error_.load() || play_error_.load()) ? -1 : 0;
-}
-
-void AudioLoopbackOperation::recordThread(const android::sp<android::AudioRecord>& audio_record,
-                                          AudioFileBase& audio_file) {
     const size_t buffer_size = calculateBufferSize(audio_record->frameCount());
     const uint64_t bytes_per_second = calculateBytesPerSecond();
     const uint64_t max_bytes = (config_.duration_seconds > 0)
@@ -1212,30 +1175,28 @@ void AudioLoopbackOperation::recordThread(const android::sp<android::AudioRecord
                                    : static_cast<uint64_t>(kMaxAudioDataSize);
 
     auto buffer = AudioUtils::createAudioBuffer(buffer_size);
-    if (buffer.empty()) {
+    uint64_t total_recorded = 0;
+    bool record_failed = buffer.empty();
+    if (record_failed) {
         printf("Error: Failed to create audio buffer\n");
-        record_error_.store(true);
-        return;
     }
     auto last_progress_time = std::chrono::steady_clock::now();
-    uint64_t total_recorded = 0;
-    while (total_recorded < max_bytes && !SignalGuard::isExitRequested() && !play_error_.load()) {
+    while (!record_failed && total_recorded < max_bytes && !SignalGuard::isExitRequested() && !play_error_.load()) {
         const ssize_t bytes_read = audio_record->read(buffer.data(), buffer.size());
         if (bytes_read < 0) {
             if (SignalGuard::isExitRequested()) {
-                return;
+                break;
             }
             printf("Error: AudioRecord read failed: %zd\n", bytes_read);
             ALOGE("AudioRecord read failed: %zd", bytes_read);
-            record_error_.store(true);
-            return;
+            record_failed = true;
+            break;
         }
         if (bytes_read == 0) {
             continue;
         }
 
         total_recorded += static_cast<uint64_t>(bytes_read);
-        total_bytes_recorded_.store(total_recorded);
         if (!buffer_queue_.push(std::vector<char>(buffer.data(), buffer.data() + bytes_read))) {
             break;
         }
@@ -1243,8 +1204,8 @@ void AudioLoopbackOperation::recordThread(const android::sp<android::AudioRecord
         if (audio_file.writeData(buffer.data(), static_cast<size_t>(bytes_read)) != static_cast<size_t>(bytes_read)) {
             printf("Error: Failed to save audio data to file\n");
             ALOGE("Failed to save audio data to file");
-            record_error_.store(true);
-            return;
+            record_failed = true;
+            break;
         }
 
         updateLevelMeter(buffer.data(), static_cast<size_t>(bytes_read));
@@ -1253,13 +1214,23 @@ void AudioLoopbackOperation::recordThread(const android::sp<android::AudioRecord
         }
     }
 
-    record_finished_.store(true);
+    // Stop the queue so playThread's pop() unblocks (and drains remaining buffers), then join.
+    // audio_record is stopped by execute() (stopAudioRecord) on return.
+    buffer_queue_.stop();
+    play_thread.join();
+
+    const uint64_t final_played = total_bytes_played_.load();
+    printf("Loopback audio completed: Total bytes recorded: %" PRIu64 ", Total bytes played: %" PRIu64
+           ", File saved: %s\n",
+           total_recorded, final_played, audio_file.getFilePath().c_str());
+
+    return (record_failed || play_error_.load()) ? -1 : 0;
 }
 
 void AudioLoopbackOperation::playThread(const android::sp<android::AudioTrack>& audio_track) {
     std::vector<char> buffer;
 
-    while (!SignalGuard::isExitRequested() && !record_error_.load() && !play_error_.load()) {
+    while (!SignalGuard::isExitRequested() && !play_error_.load()) {
         if (!buffer_queue_.pop(buffer)) {
             break;
         }
@@ -1270,42 +1241,45 @@ void AudioLoopbackOperation::playThread(const android::sp<android::AudioTrack>& 
             const ssize_t written = audio_track->write(buffer.data() + bytes_written, bytes_to_write - bytes_written);
             if (written < 0) {
                 if (SignalGuard::isExitRequested()) {
-                    return;
+                    break;
                 }
                 printf("Error: AudioTrack write failed: %zd\n", written);
                 ALOGE("AudioTrack write failed: %zd", written);
                 play_error_.store(true);
-                return;
+                break;
             }
             bytes_written += static_cast<size_t>(written);
         }
         total_bytes_played_.fetch_add(static_cast<uint64_t>(bytes_written));
     }
+
+    // Unblock a push-blocked main thread on any exit path (Ctrl+C or write error);
+    // otherwise the producer would wait forever for a consumer that has stopped.
+    buffer_queue_.stop();
 }
 
 /************************** SetParamsOperation Implementation ******************************/
 
-SetParamsOperation::SetParamsOperation(const AudioConfig& config, const std::vector<int32_t>& params)
-    : AudioOperation(config), target_params_(params) {}
+SetParamsOperation::SetParamsOperation(const AudioConfig& config) : AudioOperation(config) {}
 
 int32_t SetParamsOperation::execute() {
-    if (target_params_.empty()) {
+    if (config_.set_params.empty()) {
         printf("Error: No parameters provided\n");
         return -1;
     }
 
-    printf("SetParams operation started with %zu parameters\n", target_params_.size());
-    for (size_t i = 0; i < target_params_.size(); ++i) {
-        printf("  Parameter %zu: %d\n", i + 1, target_params_[i]);
+    printf("SetParams operation started with %zu parameters\n", config_.set_params.size());
+    for (size_t i = 0; i < config_.set_params.size(); ++i) {
+        printf("  Parameter %zu: %d\n", i + 1, config_.set_params[i]);
     }
 
-    if (target_params_.size() < 2) {
+    if (config_.set_params.size() < 2) {
         printf("Error: Audio usage parameter is required\n");
         return -1;
     }
 
-    int32_t operation_type = target_params_[0];
-    audio_usage_t usage = static_cast<audio_usage_t>(target_params_[1]);
+    int32_t operation_type = config_.set_params[0];
+    audio_usage_t usage = static_cast<audio_usage_t>(config_.set_params[1]);
 
     switch (operation_type) {
         case 1:
@@ -1337,11 +1311,10 @@ std::unique_ptr<AudioOperation> AudioOperationFactory::createOperation(AudioMode
             return std::make_unique<AudioLoopbackOperation>(config);
         case AudioMode::kSetParams:
             if (!kEnableSetParams) {
-                printf("Error: SetParams operation is disabled (kEnableSetParams=false)\n");
-                printf("To enable, set kEnableSetParams to true in audio_test_client.h and rebuild\n");
+                printf("Error: SetParams is disabled (set kEnableSetParams=true in audio_test_client.h and rebuild)\n");
                 return nullptr;
             }
-            return std::make_unique<SetParamsOperation>(config, config.set_params);
+            return std::make_unique<SetParamsOperation>(config);
         default:
             printf("Error: Invalid mode specified: %d\n", static_cast<int>(mode));
             return nullptr;
@@ -1462,7 +1435,7 @@ Record Options:
                        1: AUDIO_FORMAT_PCM_16_BIT (16-bit PCM)
                        2: AUDIO_FORMAT_PCM_8_BIT (8-bit PCM)
                        3: AUDIO_FORMAT_PCM_32_BIT (32-bit PCM)
-                       4: AUDIO_FORMAT_PCM_8_24_BIT (8-bit PCM with 24-bit padding)
+                       4: AUDIO_FORMAT_PCM_8_24_BIT (24-bit PCM in 32-bit container, 8-bit padding)
                        6: AUDIO_FORMAT_PCM_24_BIT_PACKED (24-bit packed PCM)
   -I{inputFlag}       Set audio input flag (default: 0)
                        0: NONE, 1: FAST (low latency), 2: HW_HOTWORD, 4: RAW, 8: SYNC

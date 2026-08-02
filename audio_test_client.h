@@ -19,7 +19,6 @@
 // C++ standard library headers
 #include <algorithm>
 #include <atomic>
-#include <cassert>
 #include <cerrno>
 #include <chrono>
 #include <cinttypes>
@@ -47,7 +46,7 @@
 #include <utils/String8.h>
 
 #define LOG_TAG "audio_test_client"
-#define AUDIO_TEST_CLIENT_VERSION "3.5.0"
+#define AUDIO_TEST_CLIENT_VERSION "3.6.0"
 
 static constexpr bool kEnableSetParams = false;
 
@@ -81,7 +80,6 @@ public:
     virtual const std::string& getFilePath() const;
     virtual int32_t getSampleRate() const;
     virtual int32_t getNumChannels() const;
-    virtual uint32_t getBitsPerSample() const;
     virtual audio_format_t getAudioFormat() const;
 
 protected:
@@ -271,7 +269,6 @@ public:
     bool push(std::vector<char>&& buffer);
     bool pop(std::vector<char>& buffer);
     void stop();
-    void reset();
 
 private:
     std::queue<std::vector<char>> queue_;
@@ -378,23 +375,19 @@ public:
 
 private:
     ThreadSafeBufferQueue buffer_queue_;
-    std::atomic<bool> record_error_{false};
     std::atomic<bool> play_error_{false};
-    std::atomic<bool> record_finished_{false};
-    std::atomic<uint64_t> total_bytes_recorded_{0};
     std::atomic<uint64_t> total_bytes_played_{0};
 
-    int32_t loopbackLoopDualThread(const android::sp<android::AudioRecord>& audio_record,
-                                   const android::sp<android::AudioTrack>& audio_track,
-                                   AudioFileBase& audio_file);
-    void recordThread(const android::sp<android::AudioRecord>& audio_record, AudioFileBase& audio_file);
+    int32_t runLoopback(const android::sp<android::AudioRecord>& audio_record,
+                        const android::sp<android::AudioTrack>& audio_track,
+                        AudioFileBase& audio_file);
     void playThread(const android::sp<android::AudioTrack>& audio_track);
 };
 
 /************************** Set Parameters Operation ******************************/
 class SetParamsOperation final : public AudioOperation {
 public:
-    explicit SetParamsOperation(const AudioConfig& config, const std::vector<int32_t>& params);
+    explicit SetParamsOperation(const AudioConfig& config);
     ~SetParamsOperation() noexcept override = default;
 
     SetParamsOperation(const SetParamsOperation&) = delete;
@@ -403,9 +396,6 @@ public:
     SetParamsOperation& operator=(SetParamsOperation&&) = delete;
 
     int32_t execute() override;
-
-private:
-    std::vector<int32_t> target_params_;
 };
 
 /************************** Audio Operation Factory ******************************/

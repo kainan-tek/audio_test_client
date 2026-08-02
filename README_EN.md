@@ -21,7 +21,7 @@ Audio Test Client is an Android system-level audio testing tool based on Android
 - **Complete Audio Support**: 1-16 channels, 8kHz-192kHz sample rates, 8/16/24/32-bit PCM
 - **Multi-format File Support**: WAV and Raw PCM format read/write with automatic format detection
 - **Smart Configuration**: ContentType auto-mapping based on Usage
-- **Dual-thread Loopback**: Producer-consumer architecture for reduced latency
+- **Dual-thread Loopback**: Producer-consumer architecture prevents recording data loss
 
 | Mode           | Parameter | Description                                               | Use Cases                                        |
 |----------------|-----------|-----------------------------------------------------------|--------------------------------------------------|
