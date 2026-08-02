@@ -1,6 +1,6 @@
 ---
-# clang-format configuration for Audio Test Client
-# Based on Google C++ Style Guide with project-specific customizations
+# clang-format configuration
+# Based on Google C++ Style Guide with customizations
 
 BasedOnStyle: Google
 

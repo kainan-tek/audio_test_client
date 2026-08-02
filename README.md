@@ -35,7 +35,7 @@ Audio Test Client 是一个 Android 系统级音频测试工具，基于 Android
 ### 基本语法
 
 ```bash
-audio_test_client -m<mode> [options] [audio_file]
+audio_test_client -m<mode> [options]
 ```
 
 ### 常用命令
@@ -107,16 +107,17 @@ adb shell chmod 755 /data/audio_test_client
 
 **版本兼容性**: Android.mk 会自动检测 `PLATFORM_VERSION`（14/15/16），自动适配不同 Android 版本的接口差异，无需手动修改。
 
-#### 使用 Android.bp
+#### 使用 Android.bp（可选）
+
+默认使用 Android.mk。若改用 Soong 构建，需先启用 Android.bp 并禁用 Android.mk（两者定义同名模块，不能共存）：
 
 ```bash
-# 使用 Soong 构建系统
+mv Android.bp_bk Android.bp      # 启用 Android.bp
+mv Android.mk Android.mk_bk      # 禁用 Android.mk
 m audio_test_client
-
-# 推送到设备并设置权限
-adb push out/target/product/[device]/system/bin/audio_test_client /data/
-adb shell chmod 755 /data/audio_test_client
 ```
+
+推送与权限设置与 Android.mk 方式一致。
 
 **版本兼容性**: Android.bp 默认为 Android 14+ 构建，如需支持其他版本需手动修改配置文件。
 
@@ -169,7 +170,7 @@ adb shell chmod 755 /data/audio_test_client
 
 **文件格式自动识别**：
 
-- `.wav` → WAV 格式
+- `.wav` → WAV 格式（仅支持标准 44 字节头 PCM）
 - `.pcm`, `.raw` → Raw PCM 格式（需通过 `-r`、`-c`、`-f` 指定参数）
 
 **注意**: ContentType 会根据 Usage 自动设置，无需手动指定。

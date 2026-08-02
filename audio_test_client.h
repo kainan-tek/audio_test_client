@@ -1,20 +1,8 @@
 // Copyright 2026 Audio Test Client Authors
-//
-// Licensed under the GNU General Public License v3.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     https://www.gnu.org/licenses/gpl-3.0.html
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: GPL-3.0-only
 //
 // Audio Test Client - A professional Android system-level audio testing tool.
-// This header file contains class declarations for audio recording, playback,
-// loopback testing, and system parameter configuration.
+// Class declarations for audio recording, playback, loopback, and parameter config.
 
 #ifndef AUDIO_TEST_CLIENT_H_
 #define AUDIO_TEST_CLIENT_H_
@@ -95,7 +83,6 @@ public:
     virtual int32_t getNumChannels() const;
     virtual uint32_t getBitsPerSample() const;
     virtual audio_format_t getAudioFormat() const;
-    virtual bool isOpen() const;
 
 protected:
     AudioFileBase() = default;
@@ -219,7 +206,6 @@ public:
     SignalGuard& operator=(SignalGuard&&) = delete;
 
     static bool isExitRequested();
-    static void requestExit();
 
 private:
     static volatile sig_atomic_t s_exit_requested_;
@@ -262,17 +248,12 @@ public:
 
     void setOpenSourceWithUsage(audio_usage_t usage);
     void setCloseSourceWithUsage(audio_usage_t usage);
-    void setChannelMask(const android::sp<android::AudioTrack>& audio_track, audio_channel_mask_t channel_mask);
 
 private:
     static const android::String8 kParamOpenSource;
     static const android::String8 kParamCloseSource;
-    static const android::String8 kParamChannelMask;
 
     void setSystemParameter(const android::String8& key, const android::String8& value);
-    void setAudioTrackParameter(const android::sp<android::AudioTrack>& audio_track,
-                                const android::String8& key,
-                                const android::String8& value);
     android::String8 audioUsageToString(audio_usage_t usage);
 };
 
@@ -315,8 +296,9 @@ public:
     virtual int32_t execute() = 0;
 
 protected:
-    static constexpr uint64_t kMaxAudioDataSize =
-        static_cast<uint64_t>(UINT32_MAX) - 36;  // WAV riff_size = 36 + data_size, must not overflow uint32_t
+    // 4GB cap: required for WAV (riff_size is uint32_t, so data_size must not overflow).
+    // Also applied to RawPCM as a unified upper bound to prevent unbounded disk growth.
+    static constexpr uint64_t kMaxAudioDataSize = static_cast<uint64_t>(UINT32_MAX) - 36;
     static constexpr uint32_t kProgressReportInterval = 10;
     static constexpr uint32_t kLevelMeterInterval = 25;
 
@@ -398,7 +380,7 @@ private:
     ThreadSafeBufferQueue buffer_queue_;
     std::atomic<bool> record_error_{false};
     std::atomic<bool> play_error_{false};
-    std::atomic<bool> record_completed_{false};
+    std::atomic<bool> record_finished_{false};
     std::atomic<uint64_t> total_bytes_recorded_{0};
     std::atomic<uint64_t> total_bytes_played_{0};
 

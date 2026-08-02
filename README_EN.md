@@ -35,7 +35,7 @@ Audio Test Client is an Android system-level audio testing tool based on Android
 ### Basic Syntax
 
 ```bash
-audio_test_client -m<mode> [options] [audio_file]
+audio_test_client -m<mode> [options]
 ```
 
 ### Common Commands
@@ -107,16 +107,17 @@ adb shell chmod 755 /data/audio_test_client
 
 **Version Compatibility**: Android.mk automatically detects `PLATFORM_VERSION` (14/15/16) and adapts to interface differences across Android versions, no manual modification required.
 
-#### Using Android.bp
+#### Using Android.bp (Optional)
+
+Android.mk is used by default. To switch to the Soong build, enable Android.bp and disable Android.mk first (both define the same module name and cannot coexist):
 
 ```bash
-# Use Soong build system
+mv Android.bp_bk Android.bp      # Enable Android.bp
+mv Android.mk Android.mk_bk      # Disable Android.mk
 m audio_test_client
-
-# Push to device and set permissions
-adb push out/target/product/[device]/system/bin/audio_test_client /data/
-adb shell chmod 755 /data/audio_test_client
 ```
+
+Push and permission settings are the same as for Android.mk.
 
 **Version Compatibility**: Android.bp defaults to Android 14+ build, requires manual config modification to support other versions.
 
@@ -169,7 +170,7 @@ Example: `/data/record_48000Hz_2ch_16bit_20260315_14.30.52.wav`
 
 **File Format Auto-Detection**:
 
-- `.wav` → WAV format
+- `.wav` → WAV format (standard 44-byte header PCM only)
 - `.pcm`, `.raw` → Raw PCM format (requires `-r`, `-c`, `-f` parameters)
 
 **Note**: ContentType is automatically set based on Usage, no manual specification needed.

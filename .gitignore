@@ -35,3 +35,18 @@
 .trae
 .claude
 .cursor
+# Environment
+.env
+
+# Build artifacts
+dist/
+build/
+*.egg-info/
+
+# IDE
+.idea/
+
+# Claude Code local settings (personal preferences, not for git)
+CLAUDE.local.md
+*.key
+*.pem
