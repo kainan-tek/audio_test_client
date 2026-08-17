@@ -134,12 +134,14 @@ public:
                           uint32_t bits_per_sample) override;
     bool openForReading(const std::string& file_path) override;
     size_t writeData(const char* data, size_t size) override;
+    size_t readData(char* data, size_t size) override;
     void updateHeader() override;
     void finalize() override;
     audio_format_t getAudioFormat() const override;
 
 private:
     Header header_{};
+    size_t remaining_data_ = 0;
 };
 
 /************************** Raw PCM File Implementation ******************************/
@@ -293,8 +295,7 @@ public:
     virtual int32_t execute() = 0;
 
 protected:
-    // 4GB cap: required for WAV (riff_size is uint32_t, so data_size must not overflow).
-    // Also applied to RawPCM as a unified upper bound to prevent unbounded disk growth.
+    // 4GB cap: WAV riff_size is uint32_t; also bounds RawPCM to prevent unbounded disk growth.
     static constexpr uint64_t kMaxAudioDataSize = static_cast<uint64_t>(UINT32_MAX) - 36;
     static constexpr uint32_t kProgressReportInterval = 10;
     static constexpr uint32_t kLevelMeterInterval = 25;
@@ -304,7 +305,7 @@ protected:
     std::atomic<uint32_t> level_meter_counter_{0};
 
     size_t calculateBufferSize(size_t actual_frame_count) const;
-    void resolveFrameCount(bool is_fast_path, size_t min_frame_count);
+    size_t resolveFrameCount(bool is_fast_path, size_t min_frame_count) const;
     uint64_t calculateBytesPerSecond() const;
     bool validateAudioParameters() const;
     android::content::AttributionSourceState createAttributionSource() const;

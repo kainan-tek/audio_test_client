@@ -130,7 +130,7 @@ m audio_test_client
 | 参数 | 说明 | 示例 |
 | --- | --- | --- |
 | `-m<mode>` | 工作模式：0=录音, 1=播放, 2=回环, 100=设置参数 | `-m0` |
-| `-F<frames>` | 帧数（未指定：FAST=20ms，Deep Buffer=系统默认） | `-F960` (20ms@48kHz) |
+| `-F<frames>` | 帧数（未指定：FAST=20ms，非 FAST=系统最小值） | `-F960` (20ms@48kHz) |
 | `-P<path>` | 音频文件路径 | `-P/data/test.wav` |
 | `-h` | 显示详细帮助信息 | `-h` |
 
@@ -216,10 +216,8 @@ adb logcat -s audio_test_client AudioFlinger AudioPolicyService
 
 ## 相关项目
 
-- [AudioRecorder](https://github.com/kainan-tek/AudioRecorder) - 基于 AudioRecord API 的音频录制器
-- [AAudioRecorder](https://github.com/kainan-tek/AAudioRecorder) - 基于 AAudio API 的高性能录音器
-- [AudioPlayer](https://github.com/kainan-tek/AudioPlayer) - 基于 AudioTrack API 的音频播放器
-- [AAudioPlayer](https://github.com/kainan-tek/AAudioPlayer) - 基于 AAudio API 的高性能播放器
+- [AudioTester](https://github.com/kainan-tek/AudioTester) - 基于 AudioTrack/AudioRecord 的音频测试工具
+- [AAudioTester](https://github.com/kainan-tek/AAudioTester) - 基于 AAudio 的音频测试工具
 
 ## 许可证
 

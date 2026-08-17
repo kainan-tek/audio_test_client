@@ -130,7 +130,7 @@ Push and permission settings are the same as for Android.mk.
 | Parameter    | Description                                                      | Example              |
 | ------------ | ---------------------------------------------------------------- | -------------------- |
 | `-m<mode>`   | Operation mode: 0=record, 1=playback, 2=loopback, 100=set params | `-m0`                |
-| `-F<frames>` | Frame count (unspecified: FAST=20ms, Deep Buffer=system default) | `-F960` (20ms@48kHz) |
+| `-F<frames>` | Frame count (unspecified: FAST=20ms, non-FAST=system minimum) | `-F960` (20ms@48kHz) |
 | `-P<path>`   | Audio file path                                                  | `-P/data/test.wav`   |
 | `-h`         | Display detailed help information                                | `-h`                 |
 
@@ -214,10 +214,8 @@ adb logcat -s audio_test_client AudioFlinger AudioPolicyService
 
 ## Related Projects
 
-- [AudioRecorder](https://github.com/kainan-tek/AudioRecorder) - Audio recorder based on AudioRecord API
-- [AAudioRecorder](https://github.com/kainan-tek/AAudioRecorder) - High-performance recorder based on AAudio API
-- [AudioPlayer](https://github.com/kainan-tek/AudioPlayer) - Audio player based on AudioTrack API
-- [AAudioPlayer](https://github.com/kainan-tek/AAudioPlayer) - High-performance player based on AAudio API
+- [AudioTester](https://github.com/kainan-tek/AudioTester) - audio testing tool based on AudioTrack/AudioRecord
+- [AAudioTester](https://github.com/kainan-tek/AAudioTester) - audio testing tool based on AAudio
 
 ## License
 

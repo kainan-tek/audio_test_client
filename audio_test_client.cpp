@@ -143,6 +143,7 @@ bool WavFile::openForReading(const std::string& file_path) {
     sample_rate_ = static_cast<int32_t>(header_.sample_rate);
     num_channels_ = static_cast<int32_t>(header_.num_channels);
     bits_per_sample_ = header_.bits_per_sample;
+    remaining_data_ = header_.data_size;
     is_valid_ = true;
     return file_stream_.good();
 }
@@ -164,6 +165,17 @@ size_t WavFile::writeData(const char* data, size_t size) {
         return size;
     }
     return 0;
+}
+
+size_t WavFile::readData(char* data, size_t size) {
+    // 只读 data 区，防止越过 data chunk 尾部把元数据当音频播出。
+    size = std::min(size, remaining_data_);
+    if (size == 0) {
+        return 0;
+    }
+    const size_t n = AudioFileBase::readData(data, size);
+    remaining_data_ -= n;
+    return n;
 }
 
 void WavFile::updateHeader() {
@@ -268,8 +280,7 @@ audio_format_t AudioUtils::bitsPerSampleToAudioFormat(uint32_t bits_per_sample) 
         case 24:
             return AUDIO_FORMAT_PCM_24_BIT_PACKED;
         case 32:
-            // PCM_8_24_BIT left-justifies its 24-bit sample onto 32-bit scale, so it
-            // round-trips as PCM_32_BIT (WAV stores only bit depth) with amplitude preserved.
+            // PCM_8_24_BIT left-justifies to 32-bit scale, round-trips as PCM_32_BIT (WAV stores bit depth only).
             return AUDIO_FORMAT_PCM_32_BIT;
         default:
             printf("Error: Unsupported PCM bit depth: %u\n", bits_per_sample);
@@ -379,7 +390,7 @@ std::string AudioUtils::makeRecordFilePath(const int32_t sample_rate,
     const std::string format_time = AudioUtils::getFormatTime();
     const std::string ext = AudioUtils::getAudioFileExtension(format);
     char buffer[256];
-    int bytes_written = snprintf(buffer, sizeof(buffer), "/data/record_%dHz_%dch_%dbit_%s%s", sample_rate,
+    int bytes_written = snprintf(buffer, sizeof(buffer), "/data/record_%dHz_%dch_%" PRIu32 "bit_%s%s", sample_rate,
                                  channel_count, bits_per_sample, format_time.c_str(), ext.c_str());
 
     if (bytes_written >= 240 || bytes_written < 0) {
@@ -606,27 +617,29 @@ uint64_t AudioOperation::calculateBytesPerSecond() const {
     return static_cast<uint64_t>(config_.sample_rate) * config_.channel_count * bytes_per_sample;
 }
 
-void AudioOperation::resolveFrameCount(bool is_fast_path, size_t min_frame_count) {
-    // Stability floor: buffers smaller than 10ms risk underrun or HAL rejection.
-    const size_t min_frames_for_10ms = static_cast<size_t>((config_.sample_rate * 10) / 1000);
+size_t AudioOperation::resolveFrameCount(bool is_fast_path, size_t min_frame_count) const {
+    const size_t frame_count = config_.frame_count;
 
-    if (is_fast_path) {
-        const size_t fast_frame_count = static_cast<size_t>((config_.sample_rate * 20) / 1000);
-        if (config_.frame_count == 0 || config_.frame_count > fast_frame_count) {
-            config_.frame_count = fast_frame_count;
-        }
-        config_.frame_count = std::max(config_.frame_count, min_frames_for_10ms);
-        printf("FAST path frame_count=%zu (%.1fms)\n", config_.frame_count,
-               config_.frame_count * 1000.0 / config_.sample_rate);
-    } else if (config_.frame_count > 0) {
-        config_.frame_count = std::max(config_.frame_count, min_frames_for_10ms);
-        printf("Using frame_count=%zu (%.1fms)\n", config_.frame_count,
-               config_.frame_count * 1000.0 / config_.sample_rate);
-    } else {
-        config_.frame_count = std::max(min_frame_count, min_frames_for_10ms);
-        printf("Using system min frame_count=%zu (%.1fms)\n", config_.frame_count,
-               config_.frame_count * 1000.0 / config_.sample_rate);
+    // Explicit -F: pass through as-is; let the HAL negotiate/reject (test tool needs boundary probing).
+    if (frame_count > 0) {
+        printf("Using frame_count=%zu (%.1fms)\n", frame_count, frame_count * 1000.0 / config_.sample_rate);
+        return frame_count;
     }
+
+    // No -F: pick a safe default; the HAL still decides the actual value.
+    if (is_fast_path) {
+        const size_t fast_frame_count = static_cast<size_t>((config_.sample_rate * 20) / 1000);  // 20ms
+        printf("FAST path default frame_count=%zu (%.1fms)\n", fast_frame_count,
+               fast_frame_count * 1000.0 / config_.sample_rate);
+        return fast_frame_count;
+    }
+
+    // Non-fast: system minimum, with a 20ms fallback.
+    const size_t min_frames_for_20ms = static_cast<size_t>((config_.sample_rate * 20) / 1000);
+    const size_t default_frame_count = std::max(min_frame_count, min_frames_for_20ms);
+    printf("Using system min frame_count=%zu (%.1fms)\n", default_frame_count,
+           default_frame_count * 1000.0 / config_.sample_rate);
+    return default_frame_count;
 }
 
 bool AudioOperation::validateAudioParameters() const {
@@ -669,9 +682,10 @@ bool AudioOperation::initializeAudioRecord(android::sp<android::AudioRecord>& au
     if (android::AudioRecord::getMinFrameCount(&min_frame_count, config_.sample_rate, config_.format, channel_mask) !=
         android::NO_ERROR) {
         printf("Warning: Cannot get min frame count, using default value\n");
+    } else {
+        printf("getMinFrameCount=%zu (%.2fms)\n", min_frame_count, min_frame_count * 1000.0 / config_.sample_rate);
     }
-    resolveFrameCount((config_.input_flag & AUDIO_INPUT_FLAG_FAST) != 0, min_frame_count);
-    const size_t frame_count = config_.frame_count;
+    const size_t frame_count = resolveFrameCount((config_.input_flag & AUDIO_INPUT_FLAG_FAST) != 0, min_frame_count);
 
     printf(
         "Initialize AudioRecord: source=%d, sampleRate=%d, channelCount=%d, format=%d, channelMask=0x%x, "
@@ -719,9 +733,10 @@ bool AudioOperation::initializeAudioTrack(android::sp<android::AudioTrack>& audi
     if (android::AudioTrack::getMinFrameCount(&min_frame_count, stream_type, config_.sample_rate) !=
         android::NO_ERROR) {
         printf("Warning: Cannot get min frame count using streamType, using default value\n");
+    } else {
+        printf("getMinFrameCount=%zu (%.2fms)\n", min_frame_count, min_frame_count * 1000.0 / config_.sample_rate);
     }
-    resolveFrameCount((config_.output_flag & AUDIO_OUTPUT_FLAG_FAST) != 0, min_frame_count);
-    const size_t frame_count = config_.frame_count;
+    const size_t frame_count = resolveFrameCount((config_.output_flag & AUDIO_OUTPUT_FLAG_FAST) != 0, min_frame_count);
 
     printf(
         "Initialize AudioTrack: usage=%d, sampleRate=%d, channelCount=%d, format=%d, channelMask=0x%x, "
@@ -857,9 +872,10 @@ void AudioOperation::updateLevelMeter(const char* buffer, size_t size) {
     const size_t num_samples = size / bytes_per_sample;
     float peak_amplitude = 0.0f;
     if (bytes_per_sample == 2) {
-        const int16_t* int16_data = reinterpret_cast<const int16_t*>(buffer);
         for (size_t i = 0; i < num_samples; ++i) {
-            peak_amplitude = std::max(peak_amplitude, static_cast<float>(std::abs(int16_data[i])) / kNorm16bit);
+            int16_t sample;
+            std::memcpy(&sample, buffer + i * 2, sizeof(sample));
+            peak_amplitude = std::max(peak_amplitude, static_cast<float>(std::abs(sample)) / kNorm16bit);
         }
     } else if (bytes_per_sample == 3) {
         // 24-bit packed PCM: 3 bytes per sample, little-endian
@@ -874,11 +890,12 @@ void AudioOperation::updateLevelMeter(const char* buffer, size_t size) {
             peak_amplitude = std::max(peak_amplitude, static_cast<float>(std::abs(sample)) / kNorm24bit);
         }
     } else if (bytes_per_sample == 4) {
-        const int32_t* int32_data = reinterpret_cast<const int32_t*>(buffer);
         for (size_t i = 0; i < num_samples; ++i) {
+            int32_t sample;
+            std::memcpy(&sample, buffer + i * 4, sizeof(sample));
             // int64_t cast prevents signed overflow on abs(INT32_MIN) (UB).
-            peak_amplitude = std::max(peak_amplitude,
-                                      static_cast<float>(std::abs(static_cast<int64_t>(int32_data[i]))) / kNorm32bit);
+            peak_amplitude =
+                std::max(peak_amplitude, static_cast<float>(std::abs(static_cast<int64_t>(sample))) / kNorm32bit);
         }
     } else {
         // Skip unsupported byte depths (e.g. 8-bit PCM) silently to avoid "Error" spam.
@@ -928,9 +945,7 @@ void AudioOperation::stopAudioTrack(const android::sp<android::AudioTrack>& audi
     if (audio_track != nullptr) {
         printf("Stopping AudioTrack\n");
         ALOGI("Stopping AudioTrack");
-        // Note: stop() discards frames still buffered in the track, so the tail (up to ~half a
-        // track buffer) may be cut. If exact playback-to-end matters, poll getPlaybackHeadPosition()
-        // until it reaches the written frames before stopping.
+        // stop() discards buffered frames, cutting the tail; playLoop drains first, loopback does not.
         audio_track->stop();
         audio_param_manager_.setCloseSourceWithUsage(config_.usage);
     }
@@ -996,7 +1011,6 @@ int32_t AudioRecordOperation::recordLoop(const android::sp<android::AudioRecord>
     }
 
     printf("Recording in progress. Press Ctrl+C to stop\n");
-    ALOGI("Recording in progress.");
     const uint64_t bytes_per_second = calculateBytesPerSecond();
     const uint64_t max_bytes_to_record =
         (config_.duration_seconds > 0) ? std::min(static_cast<uint64_t>(config_.duration_seconds) * bytes_per_second,
@@ -1077,7 +1091,6 @@ int32_t AudioPlayOperation::playLoop(const android::sp<android::AudioTrack>& aud
     }
 
     printf("Playing in progress. Press Ctrl+C to stop\n");
-    ALOGI("Playing in progress.");
     const uint64_t bytes_per_second = calculateBytesPerSecond();
     auto last_progress_time = std::chrono::steady_clock::now();
     uint64_t total_bytes_played = 0;
@@ -1093,7 +1106,7 @@ int32_t AudioPlayOperation::playLoop(const android::sp<android::AudioTrack>& aud
         while (bytes_written < bytes_to_write && !SignalGuard::isExitRequested()) {
             const ssize_t written =
                 audio_track->write(audio_buffer.data() + bytes_written, bytes_to_write - bytes_written);
-            if (written < 0) {
+            if (written <= 0) {
                 if (SignalGuard::isExitRequested()) {
                     break;
                 }
@@ -1108,6 +1121,16 @@ int32_t AudioPlayOperation::playLoop(const android::sp<android::AudioTrack>& aud
         updateLevelMeter(audio_buffer.data(), bytes_written);
         reportProgress("Playing", total_bytes_played, bytes_per_second, last_progress_time);
     }
+
+    // On EOF (not Ctrl+C), wait for the playback head to catch up so stop() doesn't cut the tail.
+    if (!SignalGuard::isExitRequested()) {
+        const size_t bytes_per_frame = config_.channel_count * audio_bytes_per_sample(config_.format);
+        const uint64_t frames_written = total_bytes_played / bytes_per_frame;
+        while (!SignalGuard::isExitRequested() && audio_track->getPlaybackHeadPosition() < frames_written) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+    }
+
     printf("Playback finished: Total bytes played: %" PRIu64 "\n", total_bytes_played);
 
     return 0;
@@ -1160,7 +1183,6 @@ int32_t AudioLoopbackOperation::runLoopback(const android::sp<android::AudioReco
         printf("Loopback audio started: Duration %d seconds...\n", config_.duration_seconds);
     }
     printf("Loopback audio in progress. Press Ctrl+C to stop\n");
-    ALOGI("Loopback audio in progress.");
 
     play_error_.store(false);
     total_bytes_played_.store(0);
@@ -1214,9 +1236,10 @@ int32_t AudioLoopbackOperation::runLoopback(const android::sp<android::AudioReco
         }
     }
 
-    // Stop the queue so playThread's pop() unblocks (and drains remaining buffers), then join.
-    // audio_record is stopped by execute() (stopAudioRecord) on return.
+    // Stop the queue to unblock/drain playThread, then join; execute() stops audio_record on return.
     buffer_queue_.stop();
+    // If the HAL stops consuming, playThread may block in write() and join() hangs (Ctrl+C can't
+    // interrupt); SIGKILL is required, same as recordLoop's read().
     play_thread.join();
 
     const uint64_t final_played = total_bytes_played_.load();
@@ -1239,7 +1262,7 @@ void AudioLoopbackOperation::playThread(const android::sp<android::AudioTrack>& 
         const size_t bytes_to_write = buffer.size();
         while (bytes_written < bytes_to_write && !SignalGuard::isExitRequested()) {
             const ssize_t written = audio_track->write(buffer.data() + bytes_written, bytes_to_write - bytes_written);
-            if (written < 0) {
+            if (written <= 0) {
                 if (SignalGuard::isExitRequested()) {
                     break;
                 }
@@ -1253,8 +1276,7 @@ void AudioLoopbackOperation::playThread(const android::sp<android::AudioTrack>& 
         total_bytes_played_.fetch_add(static_cast<uint64_t>(bytes_written));
     }
 
-    // Unblock a push-blocked main thread on any exit path (Ctrl+C or write error);
-    // otherwise the producer would wait forever for a consumer that has stopped.
+    // Unblock a push-blocked producer on any exit path (Ctrl+C or write error).
     buffer_queue_.stop();
 }
 
