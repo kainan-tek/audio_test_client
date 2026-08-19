@@ -166,7 +166,7 @@ m audio_test_client
 | --- | --- | --- |
 | `-u<usage>` | 音频用途类型 | 1=媒体, 2=通话, 14=游戏 |
 | `-O<flag>` | 输出标志位 | 0=标准, 4=FAST低延迟 |
-| `-P<path>` | 播放文件路径（必须指定） | `-P/data/test.wav` |
+| `-P<path>` | 播放文件路径（默认 `/data/audio_test.wav`） | `-P/data/test.wav` |
 
 **文件格式自动识别**：
 

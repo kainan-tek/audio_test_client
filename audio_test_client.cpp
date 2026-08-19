@@ -390,14 +390,8 @@ std::string AudioUtils::makeRecordFilePath(const int32_t sample_rate,
     const std::string format_time = AudioUtils::getFormatTime();
     const std::string ext = AudioUtils::getAudioFileExtension(format);
     char buffer[256];
-    int bytes_written = snprintf(buffer, sizeof(buffer), "/data/record_%dHz_%dch_%" PRIu32 "bit_%s%s", sample_rate,
-                                 channel_count, bits_per_sample, format_time.c_str(), ext.c_str());
-
-    if (bytes_written >= 240 || bytes_written < 0) {
-        snprintf(buffer, sizeof(buffer), "/data/audio_%s%s", format_time.c_str(), ext.c_str());
-        printf("Warning: File path too long, using shortened name\n");
-    }
-
+    snprintf(buffer, sizeof(buffer), "/data/record_%dHz_%dch_%" PRIu32 "bit_%s%s", sample_rate,
+             channel_count, bits_per_sample, format_time.c_str(), ext.c_str());
     return std::string(buffer);
 }
 
@@ -1346,13 +1340,13 @@ std::unique_ptr<AudioOperation> AudioOperationFactory::createOperation(AudioMode
 /************************** CommandLineParser Implementation ******************************/
 
 void CommandLineParser::parseArguments(int argc, char** argv, AudioMode& mode, AudioConfig& config) {
-    auto safeParseInt = [](const char* str, const char* opt_name) -> int {
+    auto safeParseInt = [](const char* str, const char* opt_name, int fallback = 0) -> int {
         char* end = nullptr;
         errno = 0;
         long val = std::strtol(str, &end, 10);
         if (end == str || *end != '\0' || errno == ERANGE || val < INT_MIN || val > INT_MAX) {
-            printf("Warning: Invalid value for %s: '%s', using 0\n", opt_name, str);
-            return 0;
+            printf("Warning: Invalid value for %s: '%s', using %d\n", opt_name, str, fallback);
+            return fallback;
         }
         return static_cast<int>(val);
     };
@@ -1362,7 +1356,8 @@ void CommandLineParser::parseArguments(int argc, char** argv, AudioMode& mode, A
     while ((opt = getopt(argc, argv, "m:s:r:c:f:I:u:O:F:d:P:T:h")) != -1) {
         switch (opt) {
             case 'm':
-                mode = static_cast<AudioMode>(safeParseInt(optarg, "-m"));
+                // 模式值不能回退 0：0 恰为 kRecord，笔误会意外启动录音；回退 kInvalid 走报错退出
+                mode = static_cast<AudioMode>(safeParseInt(optarg, "-m", -1));
                 break;
             case 's':
                 config.input_source = static_cast<audio_source_t>(safeParseInt(optarg, "-s"));
@@ -1505,6 +1500,7 @@ Common Options:
   -h                  Show this help message
 
 Set Params Options:
+  Note: Disabled by default. Set kEnableSetParams=true in audio_test_client.h and rebuild.
   Parameters format: audio_test_client -m100 param1[,param2[,param3...]]
     param1            First parameter (required)
                        1: open_source

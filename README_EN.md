@@ -166,7 +166,7 @@ Example: `/data/record_48000Hz_2ch_16bit_20260315_14.30.52.wav`
 |-------------|-------------------------------|--------------------------------|
 | `-u<usage>` | Audio usage type              | 1=media, 2=call, 14=game       |
 | `-O<flag>`  | Output flags                  | 0=standard, 4=FAST low latency |
-| `-P<path>`  | Playback file path (required) | `-P/data/test.wav`             |
+| `-P<path>`  | Playback file path (default: `/data/audio_test.wav`) | `-P/data/test.wav`             |
 
 **File Format Auto-Detection**:
 
