@@ -77,6 +77,8 @@ audio_test_client -m<mode> [options]
 ./audio_test_client -m100 2,1
 ```
 
+> **注意**：`-m100` 模式默认编译时禁用，上述命令会报错。启用方法见「参数设置模式 (-m100)」一节。
+
 **提示**: 使用 `-h` 参数查看完整帮助信息和所有参数选项。
 
 ## 安装部署
@@ -105,7 +107,7 @@ adb push out/target/product/[device]/system/bin/audio_test_client /data/
 adb shell chmod 755 /data/audio_test_client
 ```
 
-**版本兼容性**: Android.mk 会自动检测 `PLATFORM_VERSION`（14/15/16），自动适配不同 Android 版本的接口差异，无需手动修改。
+**版本兼容性**: Android.mk 会自动检测 `PLATFORM_VERSION`（14/15/16/17），自动适配不同 Android 版本的接口差异，无需手动修改。
 
 #### 使用 Android.bp（可选）
 
@@ -200,6 +202,14 @@ m audio_test_client
 # 错误: Permission denied
 adb root && adb remount
 adb shell setenforce 0
+```
+
+#### Ctrl+C 无响应
+
+若音频 HAL 停摆导致 `read()`/`write()` 阻塞，进程不响应 Ctrl+C，需强制终止：
+
+```bash
+kill -9 <pid>
 ```
 
 ### 调试日志

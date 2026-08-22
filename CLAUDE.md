@@ -16,7 +16,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 本项目依赖 Android 系统库（libmedia、libaudioclient、libbinder 等），**必须在 Android 源码树环境中编译**。
 
 ```bash
-# Android.mk（推荐，自动适配 PLATFORM_VERSION 14/15/16）
+# Android.mk（推荐，自动适配 PLATFORM_VERSION 14/15/16/17）
 mm audio_test_client
 
 # Android.bp（可选，Soong 构建，默认 ANDROID_API_14_PLUS，需手动适配旧版本）

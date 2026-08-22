@@ -77,6 +77,8 @@ audio_test_client -m<mode> [options]
 ./audio_test_client -m100 2,1
 ```
 
+> **Note**: the `-m100` mode is disabled at compile time by default; the commands above will fail. See the "Parameter Setting Mode (-m100)" section for how to enable it.
+
 **Tip**: Use `-h` parameter to view complete help information and all parameter options.
 
 ## Installation
@@ -105,7 +107,7 @@ adb push out/target/product/[device]/system/bin/audio_test_client /data/
 adb shell chmod 755 /data/audio_test_client
 ```
 
-**Version Compatibility**: Android.mk automatically detects `PLATFORM_VERSION` (14/15/16) and adapts to interface differences across Android versions, no manual modification required.
+**Version Compatibility**: Android.mk automatically detects `PLATFORM_VERSION` (14/15/16/17) and adapts to interface differences across Android versions, no manual modification required.
 
 #### Using Android.bp (Optional)
 
@@ -198,6 +200,14 @@ Example: `/data/record_48000Hz_2ch_16bit_20260315_14.30.52.wav`
 # Error: Permission denied
 adb root && adb remount
 adb shell setenforce 0
+```
+
+#### Ctrl+C Not Responding
+
+If a stalled audio HAL blocks `read()`/`write()`, the process won't respond to Ctrl+C; force-kill it:
+
+```bash
+kill -9 <pid>
 ```
 
 ### Debug Logging

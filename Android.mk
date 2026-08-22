@@ -57,7 +57,7 @@ LOCAL_CPPFLAGS := $(COMMON_CPPFLAGS)
 
 # Platform-specific definitions
 # Android 14+ removed callback parameters from AudioRecord/AudioTrack constructors
-ifneq ($(filter 14 15 16,$(PLATFORM_VERSION)),)
+ifneq ($(filter 14 15 16 17,$(PLATFORM_VERSION)),)
     $(info PLATFORM_VERSION is $(PLATFORM_VERSION))
     LOCAL_CFLAGS += -DANDROID_API_14_PLUS
 endif
