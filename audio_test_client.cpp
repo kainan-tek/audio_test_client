@@ -1010,10 +1010,12 @@ int32_t AudioRecordOperation::recordLoop(const android::sp<android::AudioRecord>
         (config_.duration_seconds > 0) ? std::min(static_cast<uint64_t>(config_.duration_seconds) * bytes_per_second,
                                                   static_cast<uint64_t>(kMaxAudioDataSize))
                                        : static_cast<uint64_t>(kMaxAudioDataSize);
+    // One-buffer headroom so the last write never trips WavFile's 4GB guard.
+    const uint64_t stop_threshold = max_bytes_to_record - std::min<uint64_t>(max_bytes_to_record, audio_buffer.size());
 
     auto last_progress_time = std::chrono::steady_clock::now();
     uint64_t total_bytes_read = 0;
-    while (total_bytes_read < max_bytes_to_record && !SignalGuard::isExitRequested()) {
+    while (total_bytes_read < stop_threshold && !SignalGuard::isExitRequested()) {
         const ssize_t bytes_read = audio_record->read(audio_buffer.data(), audio_buffer.size());
         if (bytes_read < 0) {
             if (SignalGuard::isExitRequested()) {
@@ -1196,8 +1198,10 @@ int32_t AudioLoopbackOperation::runLoopback(const android::sp<android::AudioReco
     if (record_failed) {
         printf("Error: Failed to create audio buffer\n");
     }
+    // Same 4GB-guard headroom as recordLoop (see comment there).
+    const uint64_t stop_threshold = max_bytes - std::min<uint64_t>(max_bytes, buffer.size());
     auto last_progress_time = std::chrono::steady_clock::now();
-    while (!record_failed && total_recorded < max_bytes && !SignalGuard::isExitRequested() && !play_error_.load()) {
+    while (!record_failed && total_recorded < stop_threshold && !SignalGuard::isExitRequested() && !play_error_.load()) {
         const ssize_t bytes_read = audio_record->read(buffer.data(), buffer.size());
         if (bytes_read < 0) {
             if (SignalGuard::isExitRequested()) {
