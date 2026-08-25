@@ -390,8 +390,8 @@ std::string AudioUtils::makeRecordFilePath(const int32_t sample_rate,
     const std::string format_time = AudioUtils::getFormatTime();
     const std::string ext = AudioUtils::getAudioFileExtension(format);
     char buffer[256];
-    snprintf(buffer, sizeof(buffer), "/data/record_%dHz_%dch_%" PRIu32 "bit_%s%s", sample_rate,
-             channel_count, bits_per_sample, format_time.c_str(), ext.c_str());
+    snprintf(buffer, sizeof(buffer), "/data/record_%dHz_%dch_%" PRIu32 "bit_%s%s", sample_rate, channel_count,
+             bits_per_sample, format_time.c_str(), ext.c_str());
     return std::string(buffer);
 }
 
@@ -1122,8 +1122,10 @@ int32_t AudioPlayOperation::playLoop(const android::sp<android::AudioTrack>& aud
     if (!SignalGuard::isExitRequested()) {
         const size_t bytes_per_frame = config_.channel_count * audio_bytes_per_sample(config_.format);
         const uint64_t frames_written = total_bytes_played / bytes_per_frame;
-        while (!SignalGuard::isExitRequested() && audio_track->getPlaybackHeadPosition() < frames_written) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        uint32_t head_position = 0;
+        while (!SignalGuard::isExitRequested() && audio_track->getPosition(&head_position) == android::NO_ERROR &&
+               static_cast<uint64_t>(head_position) < frames_written) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
     }
 
@@ -1201,7 +1203,8 @@ int32_t AudioLoopbackOperation::runLoopback(const android::sp<android::AudioReco
     // Same 4GB-guard headroom as recordLoop (see comment there).
     const uint64_t stop_threshold = max_bytes - std::min<uint64_t>(max_bytes, buffer.size());
     auto last_progress_time = std::chrono::steady_clock::now();
-    while (!record_failed && total_recorded < stop_threshold && !SignalGuard::isExitRequested() && !play_error_.load()) {
+    while (!record_failed && total_recorded < stop_threshold && !SignalGuard::isExitRequested() &&
+           !play_error_.load()) {
         const ssize_t bytes_read = audio_record->read(buffer.data(), buffer.size());
         if (bytes_read < 0) {
             if (SignalGuard::isExitRequested()) {
