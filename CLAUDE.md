@@ -89,7 +89,7 @@ AudioOperation（抽象基类）
 
 - **Android 版本兼容**：`ANDROID_API_14_PLUS` 宏控制条件编译，Android 14+ 移除了 AudioRecord/AudioTrack 构造函数的 callback 参数。Android.mk 根据 `PLATFORM_VERSION` 自动检测；Android.bp 以 `Android.bp_bk` 备份（可选启用，默认启用该宏）。
 - **`kEnableSetParams`**：编译时常量（当前为 `false`），控制 SetParamsOperation 是否可用。**当前默认关闭，`-m100` 参数设置模式不可用**，README 中该模式的文档仅作参考。
-- **WAV 4GB 限制**：`AudioOperation::kMaxAudioDataSize` 限制 WAV 数据不超过 `UINT32_MAX - 36` 字节。
+- **WAV 4GB 限制**：文件级常量 `kMaxAudioDataSize`（audio_test_client.h）限制 WAV 数据不超过 `UINT32_MAX - 36` 字节。
 - **Usage→ContentType 自动映射**：播放模式无需手动指定 ContentType，`AudioUtils::getUsageInfo()` 根据 Usage 自动推断。
 - **文件格式检测**：优先按扩展名判断（`.wav`/`.pcm`/`.raw`），扩展名优先级高于 `-T` 参数。
 - **信号退出依赖周期返回**：Ctrl+C 仅置标志，需 `read()`/`write()` 周期返回后检查才生效。若音频源停摆致 `read()` 无限阻塞，进程不响应 Ctrl+C，需 SIGKILL（与 `recordLoop` 同类限制）。

@@ -33,7 +33,6 @@
 #include <queue>
 #include <string>
 #include <thread>
-#include <unordered_map>
 #include <vector>
 
 // Other library headers
@@ -49,6 +48,9 @@
 #define AUDIO_TEST_CLIENT_VERSION "3.6.0"
 
 static constexpr bool kEnableSetParams = false;
+
+// 4GB cap: WAV riff_size (uint32_t) = 36 + data_size; also bounds RawPCM to prevent unbounded disk growth.
+static constexpr uint64_t kMaxAudioDataSize = static_cast<uint64_t>(UINT32_MAX) - 36;
 
 /************************** Audio File Format Enum ******************************/
 enum class AudioFileFormat {
@@ -295,8 +297,6 @@ public:
     virtual int32_t execute() = 0;
 
 protected:
-    // 4GB cap: WAV riff_size is uint32_t; also bounds RawPCM to prevent unbounded disk growth.
-    static constexpr uint64_t kMaxAudioDataSize = static_cast<uint64_t>(UINT32_MAX) - 36;
     static constexpr uint32_t kProgressReportInterval = 10;
     static constexpr uint32_t kLevelMeterInterval = 25;
 
@@ -307,6 +307,7 @@ protected:
     size_t calculateBufferSize(size_t actual_frame_count) const;
     size_t resolveFrameCount(bool is_fast_path, size_t min_frame_count) const;
     uint64_t calculateBytesPerSecond() const;
+    uint64_t calculateStopThreshold(size_t buffer_size) const;
     bool validateAudioParameters() const;
     android::content::AttributionSourceState createAttributionSource() const;
     bool initializeAudioRecord(android::sp<android::AudioRecord>& audio_record);

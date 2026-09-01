@@ -153,7 +153,7 @@ size_t WavFile::writeData(const char* data, size_t size) {
         return 0;
     }
 
-    if (size > UINT32_MAX || header_.data_size > UINT32_MAX - size) {
+    if (size > kMaxAudioDataSize || header_.data_size > kMaxAudioDataSize - size) {
         printf("Error: WAV file size limit (4GB) reached. Stopping recording.\n");
         return 0;
     }
@@ -532,34 +532,11 @@ void AudioParameterManager::setSystemParameter(const android::String8& key, cons
 }
 
 android::String8 AudioParameterManager::audioUsageToString(audio_usage_t usage) {
-    static const std::unordered_map<audio_usage_t, const char*> usage_map = {
-        {AUDIO_USAGE_UNKNOWN, "AUDIO_USAGE_UNKNOWN"},
-        {AUDIO_USAGE_MEDIA, "AUDIO_USAGE_MEDIA"},
-        {AUDIO_USAGE_VOICE_COMMUNICATION, "AUDIO_USAGE_VOICE_COMMUNICATION"},
-        {AUDIO_USAGE_VOICE_COMMUNICATION_SIGNALLING, "AUDIO_USAGE_VOICE_COMMUNICATION_SIGNALLING"},
-        {AUDIO_USAGE_ALARM, "AUDIO_USAGE_ALARM"},
-        {AUDIO_USAGE_NOTIFICATION, "AUDIO_USAGE_NOTIFICATION"},
-        {AUDIO_USAGE_NOTIFICATION_TELEPHONY_RINGTONE, "AUDIO_USAGE_NOTIFICATION_TELEPHONY_RINGTONE"},
-        {AUDIO_USAGE_NOTIFICATION_EVENT, "AUDIO_USAGE_NOTIFICATION_EVENT"},
-        {AUDIO_USAGE_ASSISTANCE_ACCESSIBILITY, "AUDIO_USAGE_ASSISTANCE_ACCESSIBILITY"},
-        {AUDIO_USAGE_ASSISTANCE_NAVIGATION_GUIDANCE, "AUDIO_USAGE_ASSISTANCE_NAVIGATION_GUIDANCE"},
-        {AUDIO_USAGE_ASSISTANCE_SONIFICATION, "AUDIO_USAGE_ASSISTANCE_SONIFICATION"},
-        {AUDIO_USAGE_GAME, "AUDIO_USAGE_GAME"},
-        {AUDIO_USAGE_VIRTUAL_SOURCE, "AUDIO_USAGE_VIRTUAL_SOURCE"},
-        {AUDIO_USAGE_ASSISTANT, "AUDIO_USAGE_ASSISTANT"},
-        {AUDIO_USAGE_CALL_ASSISTANT, "AUDIO_USAGE_CALL_ASSISTANT"},
-        {AUDIO_USAGE_NOTIFICATION_COMMUNICATION_REQUEST, "AUDIO_USAGE_NOTIFICATION_COMMUNICATION_REQUEST"},
-        {AUDIO_USAGE_NOTIFICATION_COMMUNICATION_INSTANT, "AUDIO_USAGE_NOTIFICATION_COMMUNICATION_INSTANT"},
-        {AUDIO_USAGE_NOTIFICATION_COMMUNICATION_DELAYED, "AUDIO_USAGE_NOTIFICATION_COMMUNICATION_DELAYED"},
-        {AUDIO_USAGE_EMERGENCY, "AUDIO_USAGE_EMERGENCY"},
-        {AUDIO_USAGE_SAFETY, "AUDIO_USAGE_SAFETY"},
-        {AUDIO_USAGE_VEHICLE_STATUS, "AUDIO_USAGE_VEHICLE_STATUS"},
-        {AUDIO_USAGE_ANNOUNCEMENT, "AUDIO_USAGE_ANNOUNCEMENT"},
-    };
-    const char* usage_name = "AUDIO_USAGE_UNKNOWN";
-    const auto it = usage_map.find(usage);
-    if (it != usage_map.end()) {
-        usage_name = it->second;
+    // audio-hal-enums.h auto-generates to_string from the enum definition: single source, no manual sync.
+    // Unknown values yield an empty string; keep the same fallback as the previous hand-written map.
+    const char* usage_name = audio_usage_to_string(usage);
+    if (usage_name == nullptr || usage_name[0] == '\0') {
+        usage_name = "AUDIO_USAGE_UNKNOWN";
     }
     return android::String8::format("0:%s", usage_name);
 }
@@ -609,6 +586,16 @@ size_t AudioOperation::calculateBufferSize(size_t actual_frame_count) const {
 uint64_t AudioOperation::calculateBytesPerSecond() const {
     const size_t bytes_per_sample = audio_bytes_per_sample(config_.format);
     return static_cast<uint64_t>(config_.sample_rate) * config_.channel_count * bytes_per_sample;
+}
+
+uint64_t AudioOperation::calculateStopThreshold(size_t buffer_size) const {
+    const uint64_t bytes_per_second = calculateBytesPerSecond();
+    const uint64_t max_bytes =
+        (config_.duration_seconds > 0)
+            ? std::min(static_cast<uint64_t>(config_.duration_seconds) * bytes_per_second, kMaxAudioDataSize)
+            : kMaxAudioDataSize;
+    // One-buffer headroom so the last write never trips WavFile's 4GB guard.
+    return max_bytes - std::min(max_bytes, static_cast<uint64_t>(buffer_size));
 }
 
 size_t AudioOperation::resolveFrameCount(bool is_fast_path, size_t min_frame_count) const {
@@ -1006,12 +993,7 @@ int32_t AudioRecordOperation::recordLoop(const android::sp<android::AudioRecord>
 
     printf("Recording in progress. Press Ctrl+C to stop\n");
     const uint64_t bytes_per_second = calculateBytesPerSecond();
-    const uint64_t max_bytes_to_record =
-        (config_.duration_seconds > 0) ? std::min(static_cast<uint64_t>(config_.duration_seconds) * bytes_per_second,
-                                                  static_cast<uint64_t>(kMaxAudioDataSize))
-                                       : static_cast<uint64_t>(kMaxAudioDataSize);
-    // One-buffer headroom so the last write never trips WavFile's 4GB guard.
-    const uint64_t stop_threshold = max_bytes_to_record - std::min<uint64_t>(max_bytes_to_record, audio_buffer.size());
+    const uint64_t stop_threshold = calculateStopThreshold(audio_buffer.size());
 
     auto last_progress_time = std::chrono::steady_clock::now();
     uint64_t total_bytes_read = 0;
@@ -1189,10 +1171,6 @@ int32_t AudioLoopbackOperation::runLoopback(const android::sp<android::AudioReco
 
     const size_t buffer_size = calculateBufferSize(audio_record->frameCount());
     const uint64_t bytes_per_second = calculateBytesPerSecond();
-    const uint64_t max_bytes = (config_.duration_seconds > 0)
-                                   ? std::min(static_cast<uint64_t>(config_.duration_seconds) * bytes_per_second,
-                                              static_cast<uint64_t>(kMaxAudioDataSize))
-                                   : static_cast<uint64_t>(kMaxAudioDataSize);
 
     auto buffer = AudioUtils::createAudioBuffer(buffer_size);
     uint64_t total_recorded = 0;
@@ -1200,8 +1178,7 @@ int32_t AudioLoopbackOperation::runLoopback(const android::sp<android::AudioReco
     if (record_failed) {
         printf("Error: Failed to create audio buffer\n");
     }
-    // Same 4GB-guard headroom as recordLoop (see comment there).
-    const uint64_t stop_threshold = max_bytes - std::min<uint64_t>(max_bytes, buffer.size());
+    const uint64_t stop_threshold = calculateStopThreshold(buffer.size());
     auto last_progress_time = std::chrono::steady_clock::now();
     while (!record_failed && total_recorded < stop_threshold && !SignalGuard::isExitRequested() &&
            !play_error_.load()) {
