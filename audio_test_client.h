@@ -16,23 +16,16 @@
 #include <time.h>
 #include <unistd.h>
 
-// C++ standard library headers
-#include <algorithm>
+// C++ standard library headers (implementation-only headers live in audio_test_client.cpp)
 #include <atomic>
-#include <cerrno>
 #include <chrono>
-#include <cinttypes>
-#include <climits>
-#include <cmath>
 #include <condition_variable>
-#include <cstring>
 #include <fstream>
 #include <memory>
 #include <mutex>
 #include <ostream>
 #include <queue>
 #include <string>
-#include <thread>
 #include <vector>
 
 // Other library headers

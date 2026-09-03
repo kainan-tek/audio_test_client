@@ -8,6 +8,16 @@
 
 #include <getopt.h>
 
+// C++ standard library headers only used by the implementation
+#include <algorithm>
+#include <cctype>
+#include <cerrno>
+#include <cinttypes>
+#include <climits>
+#include <cmath>
+#include <cstring>
+#include <thread>
+
 /************************** AudioFileBase Implementation ******************************/
 
 AudioFileBase::~AudioFileBase() noexcept {
