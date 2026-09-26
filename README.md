@@ -107,7 +107,7 @@ adb push out/target/product/[device]/system/bin/audio_test_client /data/
 adb shell chmod 755 /data/audio_test_client
 ```
 
-**版本兼容性**: Android.mk 会自动检测 `PLATFORM_VERSION`（14/15/16/17），自动适配不同 Android 版本的接口差异，无需手动修改。
+**版本兼容性**: Android.mk 会自动检测 `PLATFORM_VERSION`（13/14/15/16/17），自动适配不同 Android 版本的接口差异，无需手动修改。
 
 #### 使用 Android.bp（可选）
 
@@ -121,7 +121,7 @@ m audio_test_client
 
 推送与权限设置与 Android.mk 方式一致。
 
-**版本兼容性**: Android.bp 默认为 Android 14+ 构建，如需支持其他版本需手动修改配置文件。
+**版本兼容性**: Android.bp 默认为 Android 13+ 构建，如需支持其他版本需手动修改配置文件。
 
 **注意**: 本项目依赖 Android 系统库（libmedia、libaudioclient、libbinder 等），必须在 Android 源码树环境中编译。
 

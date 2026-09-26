@@ -16,10 +16,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 本项目依赖 Android 系统库（libmedia、libaudioclient、libbinder 等），**必须在 Android 源码树环境中编译**。
 
 ```bash
-# Android.mk（推荐，自动适配 PLATFORM_VERSION 14/15/16/17）
+# Android.mk（推荐，自动适配 PLATFORM_VERSION 13/14/15/16/17）
 mm audio_test_client
 
-# Android.bp（可选，Soong 构建，默认 ANDROID_API_14_PLUS，需手动适配旧版本）
+# Android.bp（可选，Soong 构建，默认 ANDROID_API_13_PLUS，需手动适配旧版本）
 # 以 Android.bp_bk 备份禁用（与 Android.mk 同名冲突）；启用：mv Android.bp_bk Android.bp && mv Android.mk Android.mk_bk
 m audio_test_client
 ```
@@ -87,7 +87,7 @@ AudioOperation（抽象基类）
 
 ### 关键实现细节
 
-- **Android 版本兼容**：`ANDROID_API_14_PLUS` 宏控制条件编译，Android 14+ 移除了 AudioRecord/AudioTrack 构造函数的 callback 参数。Android.mk 根据 `PLATFORM_VERSION` 自动检测；Android.bp 以 `Android.bp_bk` 备份（可选启用，默认启用该宏）。
+- **Android 版本兼容**：`ANDROID_API_13_PLUS`（13/14/15/16/17 时定义）宏控制条件编译，Android.mk 根据 `PLATFORM_VERSION` 自动检测。分界依据（源码实证）：13 起 AudioRecord/AudioTrack 的 callback 参数从 `callback_t`+`void* user` 改为 `wp<IAudioRecordCallback>`/`wp<IAudioTrackCallback>`（旧说法"14+ 移除"有误）。Android.bp 以 `Android.bp_bk` 备份（可选启用，默认启用该宏）。
 - **`kEnableSetParams`**：编译时常量（当前为 `false`），控制 SetParamsOperation 是否可用。**当前默认关闭，`-m100` 参数设置模式不可用**，README 中该模式的文档仅作参考。
 - **WAV 4GB 限制**：文件级常量 `kMaxAudioDataSize`（audio_test_client.h）限制 WAV 数据不超过 `UINT32_MAX - 36` 字节。
 - **Usage→ContentType 自动映射**：播放模式无需手动指定 ContentType，`AudioUtils::getUsageInfo()` 根据 Usage 自动推断。

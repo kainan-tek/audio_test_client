@@ -686,8 +686,8 @@ bool AudioOperation::initializeAudioRecord(android::sp<android::AudioRecord>& au
     attributes.source = config_.input_source;
     audio_record = android::sp<android::AudioRecord>::make(attribution_source);
     if (audio_record->set(config_.input_source, config_.sample_rate, config_.format, channel_mask, frame_count, nullptr,
-#ifndef ANDROID_API_14_PLUS
-                          nullptr,  // callback argument removed in Android 14+
+#ifndef ANDROID_API_13_PLUS
+                          nullptr,  // callback argument replaced with wp<IAudioRecordCallback> in Android 13+
 #endif
                           0, false, AUDIO_SESSION_ALLOCATE, android::AudioRecord::TRANSFER_SYNC, config_.input_flag,
                           getuid(), getpid(), &attributes, AUDIO_PORT_HANDLE_NONE) != android::NO_ERROR) {
@@ -740,8 +740,8 @@ bool AudioOperation::initializeAudioTrack(android::sp<android::AudioTrack>& audi
     audio_track = android::sp<android::AudioTrack>::make(attribution_source);
     if (audio_track->set(AUDIO_STREAM_DEFAULT, config_.sample_rate, config_.format, channel_mask, frame_count,
                          config_.output_flag, nullptr,
-#ifndef ANDROID_API_14_PLUS
-                         nullptr,  // callback argument removed in Android 14+
+#ifndef ANDROID_API_13_PLUS
+                         nullptr,  // callback argument replaced with wp<IAudioTrackCallback> in Android 13+
 #endif
                          0, nullptr, false, AUDIO_SESSION_ALLOCATE, android::AudioTrack::TRANSFER_SYNC, nullptr,
                          attribution_source, &attributes, false, 1.0f, AUDIO_PORT_HANDLE_NONE) != android::NO_ERROR) {

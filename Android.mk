@@ -56,10 +56,10 @@ LOCAL_CFLAGS := $(COMMON_CFLAGS)
 LOCAL_CPPFLAGS := $(COMMON_CPPFLAGS)
 
 # Platform-specific definitions
-# Android 14+ removed callback parameters from AudioRecord/AudioTrack constructors
-ifneq ($(filter 14 15 16 17,$(PLATFORM_VERSION)),)
+# Android 13+ replaced the AudioRecord/AudioTrack callback (callback_t + void* user) with wp<IAudioTrackCallback>
+ifneq ($(filter 13 14 15 16 17,$(PLATFORM_VERSION)),)
     $(info PLATFORM_VERSION is $(PLATFORM_VERSION))
-    LOCAL_CFLAGS += -DANDROID_API_14_PLUS
+    LOCAL_CFLAGS += -DANDROID_API_13_PLUS
 endif
 
 # Build as executable

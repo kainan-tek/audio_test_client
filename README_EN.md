@@ -107,7 +107,7 @@ adb push out/target/product/[device]/system/bin/audio_test_client /data/
 adb shell chmod 755 /data/audio_test_client
 ```
 
-**Version Compatibility**: Android.mk automatically detects `PLATFORM_VERSION` (14/15/16/17) and adapts to interface differences across Android versions, no manual modification required.
+**Version Compatibility**: Android.mk automatically detects `PLATFORM_VERSION` (13/14/15/16/17) and adapts to interface differences across Android versions, no manual modification required.
 
 #### Using Android.bp (Optional)
 
@@ -121,7 +121,7 @@ m audio_test_client
 
 Push and permission settings are the same as for Android.mk.
 
-**Version Compatibility**: Android.bp defaults to Android 14+ build, requires manual config modification to support other versions.
+**Version Compatibility**: Android.bp defaults to Android 13+ build, requires manual config modification to support other versions.
 
 **Note**: This project depends on Android system libraries (libmedia, libaudioclient, libbinder, etc.) and must be built within the Android source tree environment.
 

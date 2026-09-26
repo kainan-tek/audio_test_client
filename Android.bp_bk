@@ -1,7 +1,7 @@
 // Audio Test Client - Android Build Configuration
 // This file is the Soong build equivalent of Android.mk
 
-// Default configuration for Android 14+ (modern platforms)
+// Default configuration for Android 13+ (modern platforms)
 cc_defaults {
     name: "audio_test_client_defaults",
 
@@ -39,26 +39,26 @@ cc_defaults {
     ],
 }
 
-// Main binary for Android 14+ (API 34+)
-// Android 14+ removed callback parameters from AudioRecord/AudioTrack constructors
+// Main binary for Android 13+ (API 33+)
+// Android 13+ replaced the AudioRecord/AudioTrack callback (callback_t + void* user) with wp<IAudioTrackCallback>
 cc_binary {
     name: "audio_test_client",
     defaults: ["audio_test_client_defaults"],
     srcs: ["audio_test_client.cpp"],
 
     cflags: [
-        "-DANDROID_API_14_PLUS",
+        "-DANDROID_API_13_PLUS",
     ],
 }
 
 // Optional: Binary for older Android versions (if needed)
-// Uncomment this section if you need to support Android 13 and below
+// Uncomment this section if you need to support Android 12L and below
 /*
 cc_binary {
     name: "audio_test_client_legacy",
     defaults: ["audio_test_client_defaults"],
     srcs: ["audio_test_client.cpp"],
 
-    // No ANDROID_API_14_PLUS flag for legacy versions
+    // No ANDROID_API_13_PLUS flag for legacy versions
 }
 */
