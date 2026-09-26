@@ -1,7 +1,7 @@
 // Audio Test Client - Android Build Configuration
 // This file is the Soong build equivalent of Android.mk
 
-// Default configuration for Android 13+ (modern platforms)
+// Default configuration (shared by all variants below)
 cc_defaults {
     name: "audio_test_client_defaults",
 
@@ -39,8 +39,10 @@ cc_defaults {
     ],
 }
 
-// Main binary for Android 13+ (API 33+)
+// Main binary for Android 16+ ONLY (both macros hard-coded; Soong cannot read
+// PLATFORM_VERSION like Android.mk does). For Android 13-15, build with Android.mk.
 // Android 13+ replaced the AudioRecord/AudioTrack callback (callback_t + void* user) with wp<IAudioTrackCallback>
+// Android 16+ renamed AudioTrack::getRoutedDeviceId() to getRoutedDeviceIds()
 cc_binary {
     name: "audio_test_client",
     defaults: ["audio_test_client_defaults"],
@@ -48,6 +50,7 @@ cc_binary {
 
     cflags: [
         "-DANDROID_API_13_PLUS",
+        "-DANDROID_API_16_PLUS",
     ],
 }
 

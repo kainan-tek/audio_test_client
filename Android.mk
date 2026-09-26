@@ -62,5 +62,10 @@ ifneq ($(filter 13 14 15 16 17,$(PLATFORM_VERSION)),)
     LOCAL_CFLAGS += -DANDROID_API_13_PLUS
 endif
 
+# Android 16+ renamed AudioTrack::getRoutedDeviceId() to getRoutedDeviceIds()
+ifneq ($(filter 16 17,$(PLATFORM_VERSION)),)
+    LOCAL_CFLAGS += -DANDROID_API_16_PLUS
+endif
+
 # Build as executable
 include $(BUILD_EXECUTABLE)

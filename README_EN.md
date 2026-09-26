@@ -121,7 +121,7 @@ m audio_test_client
 
 Push and permission settings are the same as for Android.mk.
 
-**Version Compatibility**: Android.bp defaults to Android 13+ build, requires manual config modification to support other versions.
+**Version Compatibility**: The Android.bp hard-codes its macros and supports Android 16+ only (Soong cannot read `PLATFORM_VERSION` like Android.mk does); for Android 13-15, build with Android.mk.
 
 **Note**: This project depends on Android system libraries (libmedia, libaudioclient, libbinder, etc.) and must be built within the Android source tree environment.
 
@@ -168,7 +168,10 @@ Example: `/data/record_48000Hz_2ch_16bit_20260315_14.30.52.wav`
 |-------------|-------------------------------|--------------------------------|
 | `-u<usage>` | Audio usage type              | 1=media, 2=call, 14=game       |
 | `-O<flag>`  | Output flags                  | 0=standard, 4=FAST low latency |
+| `-D<busNumber>` | Output bus device number (decimal after the "bus" prefix in the device address) | `-D0` |
 | `-P<path>`  | Playback file path (default: `/data/audio_test.wav`) | `-P/data/test.wav`             |
+
+> **Note**: `-D` also applies to the playback side of loopback mode (-m2).
 
 **File Format Auto-Detection**:
 

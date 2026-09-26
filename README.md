@@ -121,7 +121,7 @@ m audio_test_client
 
 推送与权限设置与 Android.mk 方式一致。
 
-**版本兼容性**: Android.bp 默认为 Android 13+ 构建，如需支持其他版本需手动修改配置文件。
+**版本兼容性**: Android.bp 的宏写死仅支持 Android 16+（Soong 无法像 Android.mk 一样读取 `PLATFORM_VERSION`）；Android 13-15 请使用 Android.mk。
 
 **注意**: 本项目依赖 Android 系统库（libmedia、libaudioclient、libbinder 等），必须在 Android 源码树环境中编译。
 
@@ -168,7 +168,10 @@ m audio_test_client
 | --- | --- | --- |
 | `-u<usage>` | 音频用途类型 | 1=媒体, 2=通话, 14=游戏 |
 | `-O<flag>` | 输出标志位 | 0=标准, 4=FAST低延迟 |
+| `-D<busNumber>` | 输出总线设备号（匹配地址中 bus 前缀后的十进制数） | `-D0` |
 | `-P<path>` | 播放文件路径（默认 `/data/audio_test.wav`） | `-P/data/test.wav` |
+
+> **注意**：`-D` 同样适用于回环模式 (-m2) 的播放侧。
 
 **文件格式自动识别**：
 

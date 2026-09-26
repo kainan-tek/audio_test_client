@@ -7,6 +7,7 @@
 #include "audio_test_client.h"
 
 #include <getopt.h>
+#include <strings.h>
 
 // C++ standard library headers only used by the implementation
 #include <algorithm>
@@ -687,7 +688,7 @@ bool AudioOperation::initializeAudioRecord(android::sp<android::AudioRecord>& au
     audio_record = android::sp<android::AudioRecord>::make(attribution_source);
     if (audio_record->set(config_.input_source, config_.sample_rate, config_.format, channel_mask, frame_count, nullptr,
 #ifndef ANDROID_API_13_PLUS
-                          nullptr,  // callback argument replaced with wp<IAudioRecordCallback> in Android 13+
+                          nullptr,  // callback argument removed in Android 13+
 #endif
                           0, false, AUDIO_SESSION_ALLOCATE, android::AudioRecord::TRANSFER_SYNC, config_.input_flag,
                           getuid(), getpid(), &attributes, AUDIO_PORT_HANDLE_NONE) != android::NO_ERROR) {
@@ -708,6 +709,68 @@ bool AudioOperation::initializeAudioRecord(android::sp<android::AudioRecord>& au
     return true;
 }
 
+namespace {
+// Parse the decimal number in a bus device address, e.g. "bus00_media_out" / "BUS0" -> 0 (case-insensitive prefix)
+bool parseBusAddressNumber(const char* address, int32_t* number) {
+    if (strncasecmp(address, "bus", 3) != 0 || !std::isdigit(static_cast<unsigned char>(address[3]))) {
+        return false;
+    }
+    char* end = nullptr;
+    const long value = std::strtol(address + 3, &end, 10);
+    if (end == address + 3 || value > INT32_MAX) {
+        return false;
+    }
+    *number = static_cast<int32_t>(value);
+    return true;
+}
+}  // namespace
+
+bool AudioOperation::selectBusDevicePort(int32_t bus_device_number, audio_port_handle_t* port_id) {
+    unsigned int num_ports = 0;
+    unsigned int generation = 0;
+    if (android::AudioSystem::listAudioPorts(AUDIO_PORT_ROLE_SINK, AUDIO_PORT_TYPE_DEVICE, &num_ports, nullptr,
+                                             &generation) != android::NO_ERROR ||
+        num_ports == 0) {
+        printf("Error: Failed to enumerate audio sink device ports\n");
+        return false;
+    }
+
+    std::vector<struct audio_port_v7> ports(num_ports);
+    if (android::AudioSystem::listAudioPorts(AUDIO_PORT_ROLE_SINK, AUDIO_PORT_TYPE_DEVICE, &num_ports, ports.data(),
+                                             &generation) != android::NO_ERROR) {
+        printf("Error: Cannot query audio sink device port details\n");
+        return false;
+    }
+
+    const struct audio_port_v7* matched_port = nullptr;
+    int32_t matched_count = 0;
+    for (const auto& port : ports) {
+        int32_t number = 0;
+        if (port.ext.device.type == AUDIO_DEVICE_OUT_BUS && parseBusAddressNumber(port.ext.device.address, &number) &&
+            number == bus_device_number) {
+            matched_port = &port;
+            matched_count++;
+        }
+    }
+
+    if (matched_count != 1) {
+        printf("Error: Expect exactly 1 sink device with bus number %d, found %d, available sink devices:\n",
+               bus_device_number, matched_count);
+        for (const auto& port : ports) {
+            printf("  id=%d type=0x%x address=\"%s\"\n", port.id, port.ext.device.type, port.ext.device.address);
+        }
+        ALOGE("Expect exactly 1 sink device with bus number %d, found %d", bus_device_number, matched_count);
+        return false;
+    }
+
+    *port_id = matched_port->id;
+    printf("Selected bus device: id=%d type=0x%x address=\"%s\"\n", matched_port->id, matched_port->ext.device.type,
+           matched_port->ext.device.address);
+    ALOGI("Selected bus device: id=%d type=0x%x address=\"%s\"", matched_port->id, matched_port->ext.device.type,
+          matched_port->ext.device.address);
+    return true;
+}
+
 bool AudioOperation::initializeAudioTrack(android::sp<android::AudioTrack>& audio_track) {
     audio_channel_mask_t channel_mask = audio_channel_out_mask_from_count(config_.channel_count);
 
@@ -718,20 +781,26 @@ bool AudioOperation::initializeAudioTrack(android::sp<android::AudioTrack>& audi
         android::NO_ERROR) {
         printf("Warning: Cannot get min frame count using streamType, using default value\n");
     } else {
-        printf("getMinFrameCount=%zu (%.2fms)\n", min_frame_count, min_frame_count * 1000.0 / config_.sample_rate);
+        printf("getMinFrameCount=%zu (%.2fms)%s\n", min_frame_count, min_frame_count * 1000.0 / config_.sample_rate,
+               (config_.busRoutingRequested()) ? " (stream-based, may differ for selected device)" : "");
     }
     const size_t frame_count = resolveFrameCount((config_.output_flag & AUDIO_OUTPUT_FLAG_FAST) != 0, min_frame_count);
 
+    audio_port_handle_t selected_device_id = AUDIO_PORT_HANDLE_NONE;
+    if (config_.busRoutingRequested() && !selectBusDevicePort(config_.bus_device_number, &selected_device_id)) {
+        return false;
+    }
+
     printf(
         "Initialize AudioTrack: usage=%d, sampleRate=%d, channelCount=%d, format=%d, channelMask=0x%x, "
-        "outputFlag=0x%x, frameCount=%zu (%.2fms)\n",
+        "outputFlag=0x%x, selectedDeviceId=%d, frameCount=%zu (%.2fms)\n",
         config_.usage, config_.sample_rate, config_.channel_count, config_.format, channel_mask, config_.output_flag,
-        frame_count, frame_count * 1000.0 / config_.sample_rate);
+        selected_device_id, frame_count, frame_count * 1000.0 / config_.sample_rate);
     ALOGI(
         "Initialize AudioTrack: usage=%d, sampleRate=%d, channelCount=%d, format=%d, channelMask=0x%x, "
-        "outputFlag=0x%x, frameCount=%zu (%.2fms)\n",
+        "outputFlag=0x%x, selectedDeviceId=%d, frameCount=%zu (%.2fms)\n",
         config_.usage, config_.sample_rate, config_.channel_count, config_.format, channel_mask, config_.output_flag,
-        frame_count, frame_count * 1000.0 / config_.sample_rate);
+        selected_device_id, frame_count, frame_count * 1000.0 / config_.sample_rate);
 
     android::content::AttributionSourceState attribution_source = createAttributionSource();
     audio_attributes_t attributes{};
@@ -741,10 +810,10 @@ bool AudioOperation::initializeAudioTrack(android::sp<android::AudioTrack>& audi
     if (audio_track->set(AUDIO_STREAM_DEFAULT, config_.sample_rate, config_.format, channel_mask, frame_count,
                          config_.output_flag, nullptr,
 #ifndef ANDROID_API_13_PLUS
-                         nullptr,  // callback argument replaced with wp<IAudioTrackCallback> in Android 13+
+                         nullptr,  // callback argument removed in Android 13+
 #endif
                          0, nullptr, false, AUDIO_SESSION_ALLOCATE, android::AudioTrack::TRANSFER_SYNC, nullptr,
-                         attribution_source, &attributes, false, 1.0f, AUDIO_PORT_HANDLE_NONE) != android::NO_ERROR) {
+                         attribution_source, &attributes, false, 1.0f, selected_device_id) != android::NO_ERROR) {
         printf("Error: Failed to initialize AudioTrack parameters\n");
         ALOGE("Failed to initialize AudioTrack parameters");
         return false;
@@ -903,8 +972,25 @@ bool AudioOperation::startAudioRecord(const android::sp<android::AudioRecord>& a
     return true;
 }
 
-bool AudioOperation::startAudioTrack(const android::sp<android::AudioTrack>& audio_track) {
+// With -D, the usage-keyed open/close_source vendor params may not match the selected bus; skip them as a pair
+void AudioOperation::openSourceForUsage() {
+    if (config_.busRoutingRequested()) {
+        printf("Skip open_source parameter: bus device %d explicitly selected\n", config_.bus_device_number);
+        return;
+    }
     audio_param_manager_.setOpenSourceWithUsage(config_.usage);
+}
+
+void AudioOperation::closeSourceForUsage() {
+    if (config_.busRoutingRequested()) {
+        printf("Skip close_source parameter: bus device %d explicitly selected\n", config_.bus_device_number);
+        return;
+    }
+    audio_param_manager_.setCloseSourceWithUsage(config_.usage);
+}
+
+bool AudioOperation::startAudioTrack(const android::sp<android::AudioTrack>& audio_track) {
+    openSourceForUsage();
 
     printf("Starting AudioTrack\n");
     ALOGI("Starting AudioTrack");
@@ -913,6 +999,33 @@ bool AudioOperation::startAudioTrack(const android::sp<android::AudioTrack>& aud
         printf("Error: AudioTrack start failed with status %d\n", start_result);
         ALOGE("AudioTrack start failed with status %d", start_result);
         return false;
+    }
+
+    const audio_port_handle_t requested_device_id = audio_track->getOutputDevice();
+    if (requested_device_id != AUDIO_PORT_HANDLE_NONE) {
+        // getRoutedDeviceIds() replaces getRoutedDeviceId() since Android 16
+        std::vector<audio_port_handle_t> routed_device_ids;
+#ifdef ANDROID_API_16_PLUS
+        routed_device_ids = audio_track->getRoutedDeviceIds();
+#else
+        const audio_port_handle_t routed_device_id = audio_track->getRoutedDeviceId();
+        if (routed_device_id != AUDIO_PORT_HANDLE_NONE) {
+            routed_device_ids.push_back(routed_device_id);
+        }
+#endif
+        const bool routed_as_requested = std::find(routed_device_ids.begin(), routed_device_ids.end(),
+                                                   requested_device_id) != routed_device_ids.end();
+        printf("Routed device ids: ");
+        for (const audio_port_handle_t id : routed_device_ids) {
+            printf("%d ", id);
+        }
+        printf("\n");
+        if (!routed_as_requested) {
+            printf("Warning: Routed devices do not contain requested device %d, AudioPolicy may have fallen back\n",
+                   requested_device_id);
+            ALOGW("Routed devices do not contain requested device %d, AudioPolicy may have fallen back",
+                  requested_device_id);
+        }
     }
     return true;
 }
@@ -931,7 +1044,7 @@ void AudioOperation::stopAudioTrack(const android::sp<android::AudioTrack>& audi
         ALOGI("Stopping AudioTrack");
         // stop() discards buffered frames, cutting the tail; playLoop drains first, loopback does not.
         audio_track->stop();
-        audio_param_manager_.setCloseSourceWithUsage(config_.usage);
+        closeSourceForUsage();
     }
 }
 
@@ -1052,7 +1165,7 @@ int32_t AudioPlayOperation::execute() {
         return -1;
     }
     if (!startAudioTrack(audio_track)) {
-        audio_param_manager_.setCloseSourceWithUsage(config_.usage);
+        closeSourceForUsage();
         return -1;
     }
 
@@ -1145,7 +1258,7 @@ int32_t AudioLoopbackOperation::execute() {
         return -1;
     }
     if (!startAudioTrack(audio_track)) {
-        audio_param_manager_.setCloseSourceWithUsage(config_.usage);
+        closeSourceForUsage();
         stopAudioRecord(audio_record);
         return -1;
     }
@@ -1340,7 +1453,7 @@ void CommandLineParser::parseArguments(int argc, char** argv, AudioMode& mode, A
 
     std::string file_path_arg;
     int32_t opt = 0;
-    while ((opt = getopt(argc, argv, "m:s:r:c:f:I:u:O:F:d:P:T:h")) != -1) {
+    while ((opt = getopt(argc, argv, "m:s:r:c:f:I:u:O:F:d:P:T:D:h")) != -1) {
         switch (opt) {
             case 'm':
                 // 模式值不能回退 0：0 恰为 kRecord，笔误会意外启动录音；回退 kInvalid 走报错退出
@@ -1380,6 +1493,17 @@ void CommandLineParser::parseArguments(int argc, char** argv, AudioMode& mode, A
                 config.record_file_format =
                     (safeParseInt(optarg, "-T") == 1) ? AudioFileFormat::kRawPcm : AudioFileFormat::kWav;
                 break;
+            case 'D': {
+                // Fail hard on invalid value: silently falling back to default routing would mislead the test
+                const int32_t bus_device_number = safeParseInt(optarg, "-D", -1);
+                if (bus_device_number < 0) {
+                    printf("Error: Invalid value for -D: '%s', expect non-negative bus device number\n", optarg);
+                    mode = AudioMode::kInvalid;
+                    return;
+                }
+                config.bus_device_number = bus_device_number;
+                break;
+            }
             case 'h':
                 showHelp();
                 mode = AudioMode::kHelp;
@@ -1389,6 +1513,12 @@ void CommandLineParser::parseArguments(int argc, char** argv, AudioMode& mode, A
                 mode = AudioMode::kInvalid;
                 return;
         }
+    }
+
+    if (config.busRoutingRequested() && (mode == AudioMode::kRecord || mode == AudioMode::kSetParams)) {
+        printf("Error: -D is only supported in play (-m1) and loopback (-m2) modes\n");
+        mode = AudioMode::kInvalid;
+        return;
     }
 
     if (mode == AudioMode::kSetParams && optind < argc) {
@@ -1479,6 +1609,12 @@ Play Options:
                        0: NONE, 1: DIRECT, 2: PRIMARY, 4: FAST (low latency), 8: DEEP_BUFFER
                        Note: FAST path defaults to 20ms if -F not specified
                        (See audio-hal-enums.h for full list)
+  -D{busNumber}       Set output bus device by number (e.g., 0 -> bus0/bus00 device)
+                       Matches AUDIO_DEVICE_OUT_BUS sink devices by the decimal number after
+                       the "bus" prefix in the device address, case-insensitive.
+                       Exits with error if no unique device matches.
+                       Note: also applies to loopback mode (-m2) for the playback side.
+                       (default: unset, AudioPolicy default routing)
 
 Common Options:
   -F{frameCount}      Set frame count (default: system selected, FAST path: 20ms)
@@ -1504,6 +1640,7 @@ Examples:
   Record WAV:   audio_test_client -m0 -s1 -r48000 -c2 -f1 -I0 -F960 -d20
   Record PCM:   audio_test_client -m0 -s1 -r48000 -c2 -f1 -I0 -F960 -d20 -T1
   Play WAV:     audio_test_client -m1 -u1 -O0 -F960 -P/data/audio_test.wav
+  Play to bus0: audio_test_client -m1 -u1 -O0 -F960 -D0 -P/data/audio_test.wav
   Play PCM:     audio_test_client -m1 -u1 -O0 -F960 -P/data/audio_test.pcm -r48000 -c2 -f1
   Loopback:     audio_test_client -m2 -s1 -r48000 -c2 -f1 -I0 -u1 -O0 -F960 -d20
   SetParams:    audio_test_client -m100 1,1

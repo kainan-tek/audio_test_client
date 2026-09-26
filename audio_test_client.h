@@ -38,7 +38,7 @@
 #include <utils/String8.h>
 
 #define LOG_TAG "audio_test_client"
-#define AUDIO_TEST_CLIENT_VERSION "3.6.0"
+#define AUDIO_TEST_CLIENT_VERSION "3.7.0"
 
 static constexpr bool kEnableSetParams = false;
 
@@ -223,6 +223,9 @@ struct AudioConfig {
     audio_usage_t usage = AUDIO_USAGE_MEDIA;
     audio_output_flags_t output_flag = AUDIO_OUTPUT_FLAG_NONE;
     std::string play_file_path = "/data/audio_test.wav";
+    int32_t bus_device_number = -1;  // -1 = unset, use AudioPolicy default routing
+
+    bool busRoutingRequested() const { return bus_device_number >= 0; }
 
     std::vector<int32_t> set_params;
 };
@@ -302,11 +305,15 @@ protected:
     android::content::AttributionSourceState createAttributionSource() const;
     bool initializeAudioRecord(android::sp<android::AudioRecord>& audio_record);
     bool initializeAudioTrack(android::sp<android::AudioTrack>& audio_track);
+    bool selectBusDevicePort(int32_t bus_device_number, audio_port_handle_t* port_id);
 
     bool startAudioRecord(const android::sp<android::AudioRecord>& audio_record);
     bool startAudioTrack(const android::sp<android::AudioTrack>& audio_track);
     void stopAudioRecord(const android::sp<android::AudioRecord>& audio_record);
     void stopAudioTrack(const android::sp<android::AudioTrack>& audio_track);
+
+    void openSourceForUsage();
+    void closeSourceForUsage();
 
     bool setupAudioFileForRecording(std::unique_ptr<AudioFileBase>& audio_file);
     bool setupAudioFileForPlayback(std::unique_ptr<AudioFileBase>& audio_file);
