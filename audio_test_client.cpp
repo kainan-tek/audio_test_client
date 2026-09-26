@@ -354,14 +354,6 @@ AudioUtils::UsageInfo AudioUtils::getUsageInfo(audio_usage_t usage) {
     }
 }
 
-audio_stream_type_t AudioUtils::usageToStreamType(audio_usage_t usage) {
-    return getUsageInfo(usage).stream_type;
-}
-
-audio_content_type_t AudioUtils::usageToContentType(audio_usage_t usage) {
-    return getUsageInfo(usage).content_type;
-}
-
 std::string AudioUtils::getFormatTime() {
     auto now = std::chrono::system_clock::now();
     auto time_t_now = std::chrono::system_clock::to_time_t(now);
@@ -719,7 +711,8 @@ bool AudioOperation::initializeAudioRecord(android::sp<android::AudioRecord>& au
 bool AudioOperation::initializeAudioTrack(android::sp<android::AudioTrack>& audio_track) {
     audio_channel_mask_t channel_mask = audio_channel_out_mask_from_count(config_.channel_count);
 
-    audio_stream_type_t stream_type = AudioUtils::usageToStreamType(config_.usage);
+    const AudioUtils::UsageInfo usage_info = AudioUtils::getUsageInfo(config_.usage);
+    audio_stream_type_t stream_type = usage_info.stream_type;
     size_t min_frame_count = 0;
     if (android::AudioTrack::getMinFrameCount(&min_frame_count, stream_type, config_.sample_rate) !=
         android::NO_ERROR) {
@@ -743,7 +736,7 @@ bool AudioOperation::initializeAudioTrack(android::sp<android::AudioTrack>& audi
     android::content::AttributionSourceState attribution_source = createAttributionSource();
     audio_attributes_t attributes{};
     attributes.usage = config_.usage;
-    attributes.content_type = AudioUtils::usageToContentType(config_.usage);
+    attributes.content_type = usage_info.content_type;
     audio_track = android::sp<android::AudioTrack>::make(attribution_source);
     if (audio_track->set(AUDIO_STREAM_DEFAULT, config_.sample_rate, config_.format, channel_mask, frame_count,
                          config_.output_flag, nullptr,

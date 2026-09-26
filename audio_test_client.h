@@ -163,16 +163,13 @@ class AudioUtils {
 private:
     AudioUtils() = delete;
 
+public:
     struct UsageInfo {
         audio_stream_type_t stream_type;
         audio_content_type_t content_type;
     };
 
     static UsageInfo getUsageInfo(audio_usage_t usage);
-
-public:
-    static audio_stream_type_t usageToStreamType(audio_usage_t usage);
-    static audio_content_type_t usageToContentType(audio_usage_t usage);
     static audio_format_t parseFormatOption(int v);
     static audio_format_t bitsPerSampleToAudioFormat(uint32_t bits_per_sample);
     static std::string getFormatTime();
@@ -249,7 +246,7 @@ private:
     static const android::String8 kParamCloseSource;
 
     void setSystemParameter(const android::String8& key, const android::String8& value);
-    android::String8 audioUsageToString(audio_usage_t usage);
+    static android::String8 audioUsageToString(audio_usage_t usage);
 };
 
 /************************** Thread Safe Buffer Queue ******************************/
