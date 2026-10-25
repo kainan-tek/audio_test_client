@@ -18,7 +18,7 @@ Professional Android system-level audio testing tool designed for automotive AAO
 Audio Test Client is an Android system-level audio testing tool based on Android AudioRecord and AudioTrack Native APIs.
 
 - **Four Operation Modes**: Recording, playback, loopback testing, parameter setting
-- **Complete Audio Support**: 1-16 channels, 8kHz-192kHz sample rates, 8/16/24/32-bit PCM
+- **Complete Audio Support**: 1-16 channels (higher counts depend on platform extension support), 8kHz-192kHz sample rates, 8/16/24/32-bit PCM
 - **Multi-format File Support**: WAV and Raw PCM format read/write with automatic format detection
 - **Smart Configuration**: ContentType auto-mapping based on Usage
 - **Dual-thread Loopback**: Producer-consumer architecture prevents recording data loss

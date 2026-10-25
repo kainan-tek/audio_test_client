@@ -18,7 +18,7 @@
 Audio Test Client 是一个 Android 系统级音频测试工具，基于 Android AudioRecord 和 AudioTrack Native API 开发。
 
 - **四种工作模式**: 录音、播放、回环测试、参数设置
-- **完整音频支持**: 1-16声道，8kHz-192kHz采样率，8/16/24/32位PCM
+- **完整音频支持**: 1-16声道（部分高声道数依赖平台扩展支持），8kHz-192kHz采样率，8/16/24/32位PCM
 - **多格式文件支持**: WAV 和 Raw PCM 格式读写，自动格式检测
 - **智能配置**: ContentType 根据 Usage 自动映射
 - **双线程回环**: 生产者-消费者架构，防止录音数据丢失

@@ -21,6 +21,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <fstream>
+#include <istream>
 #include <memory>
 #include <mutex>
 #include <ostream>
@@ -368,7 +369,7 @@ public:
 private:
     ThreadSafeBufferQueue buffer_queue_;
     std::atomic<bool> play_error_{false};
-    std::atomic<uint64_t> total_bytes_played_{0};
+    std::atomic<uint64_t> total_bytes_written_{0};
 
     int32_t runLoopback(const android::sp<android::AudioRecord>& audio_record,
                         const android::sp<android::AudioTrack>& audio_track,

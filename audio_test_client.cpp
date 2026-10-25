@@ -1074,7 +1074,7 @@ int32_t AudioPlayOperation::playLoop(const android::sp<android::AudioTrack>& aud
     printf("Playing in progress. Press Ctrl+C to stop\n");
     const uint64_t bytes_per_second = calculateBytesPerSecond();
     auto last_progress_time = std::chrono::steady_clock::now();
-    uint64_t total_bytes_played = 0;
+    uint64_t total_bytes_written = 0;
     while (!SignalGuard::isExitRequested()) {
         const size_t bytes_read = audio_file.readData(audio_buffer.data(), audio_buffer.size());
         if (bytes_read == 0) {
@@ -1097,16 +1097,16 @@ int32_t AudioPlayOperation::playLoop(const android::sp<android::AudioTrack>& aud
             }
             bytes_written += static_cast<size_t>(written);
         }
-        total_bytes_played += static_cast<uint64_t>(bytes_written);
+        total_bytes_written += static_cast<uint64_t>(bytes_written);
 
         updateLevelMeter(audio_buffer.data(), bytes_written);
-        reportProgress("Playing", total_bytes_played, bytes_per_second, last_progress_time);
+        reportProgress("Playing", total_bytes_written, bytes_per_second, last_progress_time);
     }
 
     // On EOF (not Ctrl+C), wait for the playback head to catch up so stop() doesn't cut the tail.
     if (!SignalGuard::isExitRequested()) {
         const size_t bytes_per_frame = config_.channel_count * audio_bytes_per_sample(config_.format);
-        const uint64_t frames_written = total_bytes_played / bytes_per_frame;
+        const uint64_t frames_written = total_bytes_written / bytes_per_frame;
         uint32_t head_position = 0;
         while (!SignalGuard::isExitRequested() && audio_track->getPosition(&head_position) == android::NO_ERROR &&
                static_cast<uint64_t>(head_position) < frames_written) {
@@ -1114,7 +1114,7 @@ int32_t AudioPlayOperation::playLoop(const android::sp<android::AudioTrack>& aud
         }
     }
 
-    printf("Playback finished: Total bytes played: %" PRIu64 "\n", total_bytes_played);
+    printf("Playback finished: Total bytes written: %" PRIu64 "\n", total_bytes_written);
 
     return 0;
 }
@@ -1168,7 +1168,7 @@ int32_t AudioLoopbackOperation::runLoopback(const android::sp<android::AudioReco
     printf("Loopback audio in progress. Press Ctrl+C to stop\n");
 
     play_error_.store(false);
-    total_bytes_played_.store(0);
+    total_bytes_written_.store(0);
 
     std::thread play_thread(&AudioLoopbackOperation::playThread, this, audio_track);
 
@@ -1223,10 +1223,10 @@ int32_t AudioLoopbackOperation::runLoopback(const android::sp<android::AudioReco
     // interrupt); SIGKILL is required, same as recordLoop's read().
     play_thread.join();
 
-    const uint64_t final_played = total_bytes_played_.load();
-    printf("Loopback audio completed: Total bytes recorded: %" PRIu64 ", Total bytes played: %" PRIu64
+    const uint64_t final_written = total_bytes_written_.load();
+    printf("Loopback audio completed: Total bytes recorded: %" PRIu64 ", Total bytes written: %" PRIu64
            ", File saved: %s\n",
-           total_recorded, final_played, audio_file.getFilePath().c_str());
+           total_recorded, final_written, audio_file.getFilePath().c_str());
 
     return (record_failed || play_error_.load()) ? -1 : 0;
 }
@@ -1254,7 +1254,7 @@ void AudioLoopbackOperation::playThread(const android::sp<android::AudioTrack>& 
             }
             bytes_written += static_cast<size_t>(written);
         }
-        total_bytes_played_.fetch_add(static_cast<uint64_t>(bytes_written));
+        total_bytes_written_.fetch_add(static_cast<uint64_t>(bytes_written));
     }
 
     // Unblock a push-blocked producer on any exit path (Ctrl+C or write error).
@@ -1266,19 +1266,16 @@ void AudioLoopbackOperation::playThread(const android::sp<android::AudioTrack>& 
 SetParamsOperation::SetParamsOperation(const AudioConfig& config) : AudioOperation(config) {}
 
 int32_t SetParamsOperation::execute() {
-    if (config_.set_params.empty()) {
-        printf("Error: No parameters provided\n");
+    // 先校验后输出：参数缺失/不足时不应先打印"开始执行"
+    if (config_.set_params.size() < 2) {
+        printf(config_.set_params.empty() ? "Error: No parameters provided\n"
+                                          : "Error: Audio usage parameter is required\n");
         return -1;
     }
 
     printf("SetParams operation started with %zu parameters\n", config_.set_params.size());
     for (size_t i = 0; i < config_.set_params.size(); ++i) {
         printf("  Parameter %zu: %d\n", i + 1, config_.set_params[i]);
-    }
-
-    if (config_.set_params.size() < 2) {
-        printf("Error: Audio usage parameter is required\n");
-        return -1;
     }
 
     int32_t operation_type = config_.set_params[0];
@@ -1434,6 +1431,7 @@ Record Options:
                        2000: AUDIO_SOURCE_ULTRASOUND (Ultrasound)
   -r{sampleRate}      Set sample rate (e.g., 8000, 16000, 48000)
   -c{channelCount}    Set channel count (1, 2, 4, 6, 8, 12, 16)
+                       Note: higher channel counts depend on platform extension support
   -f{format}          Set audio format
                        0: AUDIO_FORMAT_DEFAULT (Default audio format)
                        1: AUDIO_FORMAT_PCM_16_BIT (16-bit PCM)
@@ -1479,6 +1477,8 @@ Play Options:
                        0: NONE, 1: DIRECT, 2: PRIMARY, 4: FAST (low latency), 8: DEEP_BUFFER
                        Note: FAST path defaults to 20ms if -F not specified
                        (See audio-hal-enums.h for full list)
+  -r, -c, -f          Raw PCM playback parameters (.pcm/.raw), same as in Record Options
+                       Note: WAV playback uses file header values; these options are ignored
 
 Common Options:
   -F{frameCount}      Set frame count (default: system selected, FAST path: 20ms)
