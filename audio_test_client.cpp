@@ -260,8 +260,8 @@ size_t RawPcmFile::writeData(const char* data, size_t size) {
 
 /************************** AudioUtils Implementation ******************************/
 
-audio_format_t AudioUtils::parseFormatOption(const int v) {
-    switch (v) {
+audio_format_t AudioUtils::parseFormatOption(const int option) {
+    switch (option) {
         case 0:
             printf("Using default format: PCM 16-bit\n");
             return AUDIO_FORMAT_PCM_16_BIT;
@@ -276,7 +276,7 @@ audio_format_t AudioUtils::parseFormatOption(const int v) {
         case 6:
             return AUDIO_FORMAT_PCM_24_BIT_PACKED;
         default:
-            printf("Error: format %d not found, using default format 16bit\n", v);
+            printf("Error: format %d not found, using default format 16bit\n", option);
             return AUDIO_FORMAT_PCM_16_BIT;
     }
 }
@@ -354,7 +354,7 @@ AudioUtils::UsageInfo AudioUtils::getUsageInfo(audio_usage_t usage) {
     }
 }
 
-std::string AudioUtils::getFormatTime() {
+std::string AudioUtils::getFileNameTimestamp() {
     auto now = std::chrono::system_clock::now();
     auto time_t_now = std::chrono::system_clock::to_time_t(now);
     struct tm tm_now;
@@ -366,7 +366,7 @@ std::string AudioUtils::getFormatTime() {
     return std::string(buffer);
 }
 
-std::string AudioUtils::getTimestamp() {
+std::string AudioUtils::getLogTimestamp() {
     auto now = std::chrono::system_clock::now();
     auto time_t_now = std::chrono::system_clock::to_time_t(now);
     auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()) % 1000;
@@ -389,11 +389,11 @@ std::string AudioUtils::makeRecordFilePath(const int32_t sample_rate,
     if (!override_path.empty()) {
         return override_path;
     }
-    const std::string format_time = AudioUtils::getFormatTime();
+    const std::string file_timestamp = AudioUtils::getFileNameTimestamp();
     const std::string ext = AudioUtils::getAudioFileExtension(format);
     char buffer[256];
     snprintf(buffer, sizeof(buffer), "/data/record_%dHz_%dch_%" PRIu32 "bit_%s%s", sample_rate, channel_count,
-             bits_per_sample, format_time.c_str(), ext.c_str());
+             bits_per_sample, file_timestamp.c_str(), ext.c_str());
     return std::string(buffer);
 }
 
@@ -832,8 +832,8 @@ bool AudioOperation::setupAudioFileForPlayback(std::unique_ptr<AudioFileBase>& a
     return true;
 }
 
-void AudioOperation::updateLevelMeter(const char* buffer, size_t size) {
-    if (++level_meter_counter_ % kLevelMeterInterval != 0) {
+void AudioOperation::reportAudioLevel(const char* buffer, size_t size) {
+    if (++level_meter_counter_ % kLevelMeterIntervalBuffers != 0) {
         return;
     }
 
@@ -887,7 +887,7 @@ void AudioOperation::updateLevelMeter(const char* buffer, size_t size) {
     }
 
     const float db_level = peak_amplitude > 0.0f ? std::max(20.0f * std::log10(peak_amplitude), kDbFloor) : kDbFloor;
-    const std::string timestamp = AudioUtils::getTimestamp();
+    const std::string timestamp = AudioUtils::getLogTimestamp();
     printf("[%s] Audio Level: %.1f dB, size: %zu bytes\n", timestamp.c_str(), db_level, size);
 }
 
@@ -941,7 +941,7 @@ bool AudioOperation::reportProgress(const char* action,
                                     std::chrono::steady_clock::time_point& last_time) {
     auto now = std::chrono::steady_clock::now();
     auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - last_time);
-    if (elapsed.count() < kProgressReportInterval) {
+    if (elapsed.count() < kProgressReportIntervalSec) {
         return false;
     }
     printf("%s ... , processed %.2f MB (%.2fs), elapsed %llds\n", action,
@@ -1022,7 +1022,7 @@ int32_t AudioRecordOperation::recordLoop(const android::sp<android::AudioRecord>
             return -1;
         }
 
-        updateLevelMeter(audio_buffer.data(), static_cast<size_t>(bytes_read));
+        reportAudioLevel(audio_buffer.data(), static_cast<size_t>(bytes_read));
         if (reportProgress("Recording", total_bytes_read, bytes_per_second, last_progress_time)) {
             audio_file.updateHeader();
         }
@@ -1034,11 +1034,11 @@ int32_t AudioRecordOperation::recordLoop(const android::sp<android::AudioRecord>
     return 0;
 }
 
-/************************** AudioPlayOperation Implementation ******************************/
+/************************** AudioPlaybackOperation Implementation ******************************/
 
-AudioPlayOperation::AudioPlayOperation(const AudioConfig& config) : AudioOperation(config) {}
+AudioPlaybackOperation::AudioPlaybackOperation(const AudioConfig& config) : AudioOperation(config) {}
 
-int32_t AudioPlayOperation::execute() {
+int32_t AudioPlaybackOperation::execute() {
     std::unique_ptr<AudioFileBase> audio_file;
     android::sp<android::AudioTrack> audio_track;
 
@@ -1063,7 +1063,7 @@ int32_t AudioPlayOperation::execute() {
     return operation_result;
 }
 
-int32_t AudioPlayOperation::playLoop(const android::sp<android::AudioTrack>& audio_track, AudioFileBase& audio_file) {
+int32_t AudioPlaybackOperation::playLoop(const android::sp<android::AudioTrack>& audio_track, AudioFileBase& audio_file) {
     const size_t buffer_size = calculateBufferSize(audio_track->frameCount());
     auto audio_buffer = AudioUtils::createAudioBuffer(buffer_size);
     if (audio_buffer.empty()) {
@@ -1099,7 +1099,7 @@ int32_t AudioPlayOperation::playLoop(const android::sp<android::AudioTrack>& aud
         }
         total_bytes_written += static_cast<uint64_t>(bytes_written);
 
-        updateLevelMeter(audio_buffer.data(), bytes_written);
+        reportAudioLevel(audio_buffer.data(), bytes_written);
         reportProgress("Playing", total_bytes_written, bytes_per_second, last_progress_time);
     }
 
@@ -1211,7 +1211,7 @@ int32_t AudioLoopbackOperation::runLoopback(const android::sp<android::AudioReco
             break;
         }
 
-        updateLevelMeter(buffer.data(), static_cast<size_t>(bytes_read));
+        reportAudioLevel(buffer.data(), static_cast<size_t>(bytes_read));
         if (reportProgress("Loopback recording", total_recorded, bytes_per_second, last_progress_time)) {
             audio_file.updateHeader();
         }
@@ -1261,11 +1261,11 @@ void AudioLoopbackOperation::playThread(const android::sp<android::AudioTrack>& 
     buffer_queue_.stop();
 }
 
-/************************** SetParamsOperation Implementation ******************************/
+/************************** AudioSetParamsOperation Implementation ******************************/
 
-SetParamsOperation::SetParamsOperation(const AudioConfig& config) : AudioOperation(config) {}
+AudioSetParamsOperation::AudioSetParamsOperation(const AudioConfig& config) : AudioOperation(config) {}
 
-int32_t SetParamsOperation::execute() {
+int32_t AudioSetParamsOperation::execute() {
     // 先校验后输出：参数缺失/不足时不应先打印"开始执行"
     if (config_.set_params.size() < 2) {
         printf(config_.set_params.empty() ? "Error: No parameters provided\n"
@@ -1306,7 +1306,7 @@ std::unique_ptr<AudioOperation> AudioOperationFactory::createOperation(AudioMode
         case AudioMode::kRecord:
             return std::make_unique<AudioRecordOperation>(config);
         case AudioMode::kPlay:
-            return std::make_unique<AudioPlayOperation>(config);
+            return std::make_unique<AudioPlaybackOperation>(config);
         case AudioMode::kLoopback:
             return std::make_unique<AudioLoopbackOperation>(config);
         case AudioMode::kSetParams:
@@ -1314,7 +1314,7 @@ std::unique_ptr<AudioOperation> AudioOperationFactory::createOperation(AudioMode
                 printf("Error: SetParams is disabled (set kEnableSetParams=true in audio_test_client.h and rebuild)\n");
                 return nullptr;
             }
-            return std::make_unique<SetParamsOperation>(config);
+            return std::make_unique<AudioSetParamsOperation>(config);
         default:
             printf("Error: Invalid mode specified: %d\n", static_cast<int>(mode));
             return nullptr;

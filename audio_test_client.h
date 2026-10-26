@@ -171,10 +171,10 @@ public:
     };
 
     static UsageInfo getUsageInfo(audio_usage_t usage);
-    static audio_format_t parseFormatOption(int v);
+    static audio_format_t parseFormatOption(int option);
     static audio_format_t bitsPerSampleToAudioFormat(uint32_t bits_per_sample);
-    static std::string getFormatTime();
-    static std::string getTimestamp();
+    static std::string getFileNameTimestamp();
+    static std::string getLogTimestamp();
     static std::string makeRecordFilePath(const int32_t sample_rate,
                                           const int32_t channel_count,
                                           const uint32_t bits_per_sample,
@@ -288,8 +288,8 @@ public:
     virtual int32_t execute() = 0;
 
 protected:
-    static constexpr uint32_t kProgressReportInterval = 10;
-    static constexpr uint32_t kLevelMeterInterval = 25;
+    static constexpr uint32_t kProgressReportIntervalSec = 10;
+    static constexpr uint32_t kLevelMeterIntervalBuffers = 25;
 
     AudioConfig config_;
     AudioParameterManager audio_param_manager_;
@@ -316,7 +316,7 @@ protected:
                         uint64_t total_bytes_processed,
                         uint64_t bytes_per_second,
                         std::chrono::steady_clock::time_point& last_time);
-    void updateLevelMeter(const char* buffer, size_t size);
+    void reportAudioLevel(const char* buffer, size_t size);
 };
 
 /************************** Audio Record Operation ******************************/
@@ -336,16 +336,16 @@ private:
     int32_t recordLoop(const android::sp<android::AudioRecord>& audio_record, AudioFileBase& audio_file);
 };
 
-/************************** Audio Play Operation ******************************/
-class AudioPlayOperation final : public AudioOperation {
+/************************** Audio Playback Operation ******************************/
+class AudioPlaybackOperation final : public AudioOperation {
 public:
-    explicit AudioPlayOperation(const AudioConfig& config);
-    ~AudioPlayOperation() noexcept override = default;
+    explicit AudioPlaybackOperation(const AudioConfig& config);
+    ~AudioPlaybackOperation() noexcept override = default;
 
-    AudioPlayOperation(const AudioPlayOperation&) = delete;
-    AudioPlayOperation& operator=(const AudioPlayOperation&) = delete;
-    AudioPlayOperation(AudioPlayOperation&&) = delete;
-    AudioPlayOperation& operator=(AudioPlayOperation&&) = delete;
+    AudioPlaybackOperation(const AudioPlaybackOperation&) = delete;
+    AudioPlaybackOperation& operator=(const AudioPlaybackOperation&) = delete;
+    AudioPlaybackOperation(AudioPlaybackOperation&&) = delete;
+    AudioPlaybackOperation& operator=(AudioPlaybackOperation&&) = delete;
 
     int32_t execute() override;
 
@@ -377,16 +377,16 @@ private:
     void playThread(const android::sp<android::AudioTrack>& audio_track);
 };
 
-/************************** Set Parameters Operation ******************************/
-class SetParamsOperation final : public AudioOperation {
+/************************** Audio Set Parameters Operation ******************************/
+class AudioSetParamsOperation final : public AudioOperation {
 public:
-    explicit SetParamsOperation(const AudioConfig& config);
-    ~SetParamsOperation() noexcept override = default;
+    explicit AudioSetParamsOperation(const AudioConfig& config);
+    ~AudioSetParamsOperation() noexcept override = default;
 
-    SetParamsOperation(const SetParamsOperation&) = delete;
-    SetParamsOperation& operator=(const SetParamsOperation&) = delete;
-    SetParamsOperation(SetParamsOperation&&) = delete;
-    SetParamsOperation& operator=(SetParamsOperation&&) = delete;
+    AudioSetParamsOperation(const AudioSetParamsOperation&) = delete;
+    AudioSetParamsOperation& operator=(const AudioSetParamsOperation&) = delete;
+    AudioSetParamsOperation(AudioSetParamsOperation&&) = delete;
+    AudioSetParamsOperation& operator=(AudioSetParamsOperation&&) = delete;
 
     int32_t execute() override;
 };

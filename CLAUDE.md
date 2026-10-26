@@ -72,9 +72,9 @@ AudioFileBase（抽象基类）
 
 AudioOperation（抽象基类）
 ├── AudioRecordOperation（录音：AudioRecord → AudioFileBase 写入文件）
-├── AudioPlayOperation（播放：AudioFileBase 读取文件 → AudioTrack 播放）
+├── AudioPlaybackOperation（播放：AudioFileBase 读取文件 → AudioTrack 播放）
 ├── AudioLoopbackOperation（回环：主线程录制 + playThread 播放，ThreadSafeBufferQueue 解耦）
-└── SetParamsOperation（参数设置：AudioParameterManager 设置系统音频参数）
+└── AudioSetParamsOperation（参数设置：AudioParameterManager 设置系统音频参数）
 
 工具类：AudioUtils | AudioParameterManager | SignalGuard(RAII) | ThreadSafeBufferQueue(有界阻塞队列)
 ```
@@ -88,7 +88,7 @@ AudioOperation（抽象基类）
 ### 关键实现细节
 
 - **Android 版本兼容**：`ANDROID_API_13_PLUS`（13/14/15/16/17 时定义）宏控制条件编译，Android.mk 根据 `PLATFORM_VERSION` 自动检测。分界依据（源码实证）：13 起 AudioRecord/AudioTrack 的 callback 参数从 `callback_t`+`void* user` 改为 `wp<IAudioRecordCallback>`/`wp<IAudioTrackCallback>`（旧说法"14+ 移除"有误）。Android.bp 以 `Android.bp_bk` 备份（可选启用，默认启用该宏）。
-- **`kEnableSetParams`**：编译时常量（当前为 `false`），控制 SetParamsOperation 是否可用。**当前默认关闭，`-m100` 参数设置模式不可用**，README 中该模式的文档仅作参考。
+- **`kEnableSetParams`**：编译时常量（当前为 `false`），控制 AudioSetParamsOperation 是否可用。**当前默认关闭，`-m100` 参数设置模式不可用**，README 中该模式的文档仅作参考。
 - **WAV 4GB 限制**：文件级常量 `kMaxAudioDataSize`（audio_test_client.h）限制 WAV 数据不超过 `UINT32_MAX - 36` 字节。
 - **Usage→ContentType 自动映射**：播放模式无需手动指定 ContentType，`AudioUtils::getUsageInfo()` 根据 Usage 自动推断。
 - **文件格式检测**：优先按扩展名判断（`.wav`/`.pcm`/`.raw`），扩展名优先级高于 `-T` 参数。
